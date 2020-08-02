@@ -29,7 +29,7 @@ func sshCommand(identityFile string, connTimeoutSec int) string {
 	)
 }
 
-func runCommand(dir string, cmd string) bool {
+func runCommand(dir string, cmd string, onStdout func(string), onStderr func(string)) bool {
 	command := exec.Command("sh", "-c", cmd)
 	command.Dir = dir
 
@@ -38,8 +38,9 @@ func runCommand(dir string, cmd string) bool {
 	stdoutScanner := bufio.NewScanner(stdout)
 	go func() {
 		for stdoutScanner.Scan() {
-			fmt.Println(stdoutScanner.Text())
-			masterConnectionAlive = true
+			stdout := stdoutScanner.Text()
+			fmt.Println(stdout)
+			if onStdout != nil { onStdout(stdout) }
 		}
 	}()
 
@@ -48,9 +49,10 @@ func runCommand(dir string, cmd string) bool {
 	stderrScanner := bufio.NewScanner(stderr)
 	go func() {
 		for stderrScanner.Scan() {
-			_, err := fmt.Fprintln(os.Stderr, stderrScanner.Text())
+			stderr := stderrScanner.Text()
+			_, err := fmt.Fprintln(os.Stderr, stderr)
 			PanicIf(err)
-			masterConnectionAlive = false
+			if onStderr != nil { onStderr(stderr) }
 		}
 	}()
 
@@ -103,6 +105,8 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 						remoteHost,
 						remoteDestination,
 					),
+					nil,
+					nil,
 				)
 			},
 		)
@@ -120,6 +124,8 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 						remoteDestination,
 						strings.Join(deleted, " "),
 					),
+					nil,
+					nil,
 				)
 			},
 		)
@@ -193,6 +199,8 @@ func main() {
 					connTimeout,
 					remoteHost,
 				),
+				func(string) { masterConnectionAlive = true },
+				func(string) { masterConnectionAlive = false },
 			)
 			masterConnectionAlive = false
 			time.Sleep(time.Duration(connTimeout) * time.Second)
