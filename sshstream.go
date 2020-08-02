@@ -66,7 +66,7 @@ func fileExists(filename string) bool {
 	return !os.IsNotExist(err)
 }
 
-func syncFiles(localSource string, remoteHost string, remoteDestination string, sshCmd string) {
+func syncFiles(localSource string, remoteHost string, remoteDestination string, sshCmd string, verbosity int) {
 	if syncingAwait { return }
 	syncingAwait = true
 
@@ -95,8 +95,10 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 	}
 
 	if len(existing) > 0 {
+		info := fmt.Sprintf("uploading %d file(s)", len(existing))
+		if verbosity == 2 { info += fmt.Sprintf(" (%s)", strings.Join(existing, ", ")) }
 		stopwatch(
-			fmt.Sprintf("uploading %d file(s)", len(existing)),
+			info,
 			func() bool {
 				return runCommand(
 					localSource,
@@ -114,8 +116,10 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 		)
 	}
 	if len(deleted) > 0 {
+		info := fmt.Sprintf("deleting %d file(s)", len(deleted))
+		if verbosity == 2 { info += fmt.Sprintf(" (%s)", strings.Join(deleted, ", ")) }
 		stopwatch(
-			fmt.Sprintf("deleting %d file(s)", len(deleted)),
+			info,
 			func() bool {
 				return runCommand(
 					localSource,
@@ -181,6 +185,7 @@ func main() {
 	identityFile := flag.String("i", "", "identity file (rsa)")
 	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
 	ignoredFlag  := flag.String("ignored", "", "regexp pattern to ignore (f.e. '^\\.git/')")
+	verbosity    := flag.Int("v", 1, "verbosity level (1-2)")
 	flag.Parse()
 
 	var ignored *regexp.Regexp
@@ -234,7 +239,7 @@ func main() {
 
 			if ignored != nil && ignored.MatchString(filename) { return }
 
-			doSync := func() { syncFiles(localDir, remoteHost, remoteDir, sshCmd) }
+			doSync := func() { syncFiles(localDir, remoteHost, remoteDir, sshCmd, *verbosity) }
 
 			if len(files) == 0 {
 				go func() {
