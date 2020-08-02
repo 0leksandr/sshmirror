@@ -2,13 +2,13 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -48,13 +48,17 @@ func runCommand(dir string, cmd string, onStdout func(string), onStderr func(str
 	go func() {
 		for stderrScanner.Scan() {
 			stderr := stderrScanner.Text()
-			_, err := fmt.Fprintln(os.Stderr, stderr)
-			PanicIf(err)
+			writeToStderr(stderr)
 			if onStderr != nil { onStderr(stderr) }
 		}
 	}()
 
 	return command.Run() == nil
+}
+
+func writeToStderr(text string) {
+	_, err := fmt.Fprintln(os.Stderr, text)
+	PanicIf(err)
 }
 
 func fileExists(filename string) bool {
@@ -174,22 +178,35 @@ func stopwatch(description string, operation func() bool) {
 }
 
 func main() {
-	args := os.Args[1:]
+	localDir     := stripTrailSlash(flag.Arg(0))
+	remoteHost   := flag.Arg(1)
+	remoteDir    := stripTrailSlash(flag.Arg(2))
+	identityFile := *flag.String("i", "", "identity file (rsa)")
+	connTimeout  := *flag.Int("t", 5, "connection timeout (seconds)")
 
-	localDir         := stripTrailSlash(args[0])
-	remoteHost       := args[1]
-	remoteDir        := stripTrailSlash(args[2])
-	identityFile     := args[3]
-	connTimeout, err := strconv.Atoi(args[4])
-	ignored          := args[4:]
+	var ignored *regexp.Regexp
+	if ignoredFlag := *flag.String("ignored", "", "regexp pattern to ignore (f.e. '^\\.git/')"); ignoredFlag != "" {
+		ignored = regexp.MustCompile(ignoredFlag)
+	}
 
-	PanicIf(err)
+	flag.Parse()
+	if flag.NArg() != 3 {
+		writeToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
+		flag.PrintDefaults()
+		writeToStderr(
+			"Required parameters:\n" +
+			"  SOURCE - local directory (absolute path)\n" +
+			"  HOST (IP or HOST or USER@HOST)\n" +
+			"  DESTINATION - remote directory (absolute path)]",
+		)
+		return
+	}
 
 	sshCmd := fmt.Sprintf(
-		"ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1 -i %s",
+		"ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1",
 		connTimeout,
-		identityFile,
 	)
+	if identityFile != "" { sshCmd += " -i " + identityFile }
 
 	go func() {
 		for {
@@ -215,11 +232,7 @@ func main() {
 		func(filename string) {
 			filename = filename[len(localDir)+1:]
 
-			for _, regex := range ignored {
-				if regexp.MustCompile(regex).MatchString(filename) {
-					return
-				}
-			}
+			if ignored != nil && ignored.MatchString(filename) { return }
 
 			doSync := func() { syncFiles(localDir, remoteHost, remoteDir, sshCmd) }
 
