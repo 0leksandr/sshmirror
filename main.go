@@ -21,14 +21,6 @@ var syncing bool
 var masterConnectionAlive bool
 var syncingAwait bool
 
-func sshCommand(identityFile string, connTimeoutSec int) string {
-	return fmt.Sprintf(
-		"ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1 -i %s",
-		connTimeoutSec,
-		identityFile,
-	)
-}
-
 func runCommand(dir string, cmd string, onStdout func(string), onStderr func(string)) bool {
 	command := exec.Command("sh", "-c", cmd)
 	command.Dir = dir
@@ -134,19 +126,20 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 	syncing = false
 }
 
-func watchDir(path string, fi os.FileInfo, err error) error {
-	PanicIf(err)
-	if fi.Mode().IsDir() { return watcher.Add(path) }
-	return nil
-}
-
 func watchDirRecursive(path string, processor func(string)) {
 	var err error
 	watcher, err = fsnotify.NewWatcher()
 	PanicIf(err)
 	defer func() { PanicIf(watcher.Close()) }()
 
-	PanicIf(filepath.Walk(path, watchDir))
+	PanicIf(filepath.Walk(
+		path,
+		func(path string, fi os.FileInfo, err error) error {
+			PanicIf(err)
+			if fi.Mode().IsDir() { return watcher.Add(path) }
+			return nil
+		},
+	))
 
 	done := make(chan bool)
 
@@ -175,7 +168,7 @@ func stopwatch(description string, operation func() bool) {
 }
 
 func main() {
-	args             := os.Args[1:]
+	args := os.Args[1:]
 
 	localDir         := stripTrailSlash(args[0])
 	remoteHost       := args[1]
@@ -186,7 +179,11 @@ func main() {
 
 	PanicIf(err)
 
-	sshCmd := sshCommand(identityFile, connTimeout)
+	sshCmd := fmt.Sprintf(
+		"ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1 -i %s",
+		connTimeout,
+		identityFile,
+	)
 
 	go func() {
 		for {
@@ -212,25 +209,25 @@ func main() {
 		func(filename string) {
 			filename = filename[len(localDir)+1:]
 
-			isIgnored := false
 			for _, regex := range ignored {
 				if regexp.MustCompile(regex).MatchString(filename) {
-					isIgnored = true
+					return
 				}
 			}
-			if isIgnored { return }
+
+			doSync := func() { syncFiles(localDir, remoteHost, remoteDir, sshCmd) }
 
 			if len(files) == 0 {
 				go func() {
 					time.Sleep(5 * time.Second)
-					syncFiles(localDir, remoteHost, remoteDir, sshCmd)
+					doSync()
 				}()
 			}
 
 			go func() {
 				time.Sleep(500 * time.Millisecond)
-				isLast := (len(files) > 0) && (files[len(files)-1] == filename)
-				if isLast { syncFiles(localDir, remoteHost, remoteDir, sshCmd) }
+				isLast := (len(files) > 0) && (files[len(files)-1] == filename) // TODO: stop other threads instead
+				if isLast { doSync() }
 			}()
 
 			files = append(files, filename)
