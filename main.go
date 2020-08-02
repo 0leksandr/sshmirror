@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 )
-//import "../../go/src/my"
+import "./my"
 
 var files []string
 var watcher *fsnotify.Watcher
@@ -26,7 +26,7 @@ func runCommand(dir string, cmd string, onStdout func(string), onStderr func(str
 	command.Dir = dir
 
 	stdout, err := command.StdoutPipe()
-	PanicIf(err)
+	my.PanicIf(err)
 	stdoutScanner := bufio.NewScanner(stdout)
 	go func() {
 		for stdoutScanner.Scan() {
@@ -37,13 +37,13 @@ func runCommand(dir string, cmd string, onStdout func(string), onStderr func(str
 	}()
 
 	stderr, err := command.StderrPipe()
-	PanicIf(err)
+	my.PanicIf(err)
 	stderrScanner := bufio.NewScanner(stderr)
 	go func() {
 		for stderrScanner.Scan() {
 			stderr := stderrScanner.Text()
 			_, err := fmt.Fprintln(os.Stderr, stderr)
-			PanicIf(err)
+			my.PanicIf(err)
 			if onStderr != nil { onStderr(stderr) }
 		}
 	}()
@@ -129,13 +129,13 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 func watchDirRecursive(path string, processor func(string)) {
 	var err error
 	watcher, err = fsnotify.NewWatcher()
-	PanicIf(err)
-	defer func() { PanicIf(watcher.Close()) }()
+	my.PanicIf(err)
+	defer func() { my.PanicIf(watcher.Close()) }()
 
-	PanicIf(filepath.Walk(
+	my.PanicIf(filepath.Walk(
 		path,
 		func(path string, fi os.FileInfo, err error) error {
-			PanicIf(err)
+			my.PanicIf(err)
 			if fi.Mode().IsDir() { return watcher.Add(path) }
 			return nil
 		},
@@ -147,7 +147,7 @@ func watchDirRecursive(path string, processor func(string)) {
 		for {
 			select {
 				case event := <-watcher.Events: processor(event.Name)
-				case err := <-watcher.Errors: PanicIf(err)
+				case err := <-watcher.Errors: my.PanicIf(err)
 			}
 		}
 	}()
@@ -177,7 +177,7 @@ func main() {
 	connTimeout, err := strconv.Atoi(args[4])
 	ignored          := args[4:]
 
-	PanicIf(err)
+	my.PanicIf(err)
 
 	sshCmd := fmt.Sprintf(
 		"ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1 -i %s",
