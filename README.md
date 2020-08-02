@@ -5,5 +5,9 @@ Basic usage scenario - local development with constant uploading to remote serve
 Example usage:
 
 ```shell script
-sshstream -i=~/.ssh/my_rsa -t=5 -ignored='(^\.git/|^\.idea/|~$)' ~/myProject me@remote.server /var/www/html/myProject
+sshstream \
+    -i=~/.ssh/my_rsa \
+    -t=5 \
+    -ignored='(^\.git/|^\.idea/|~$)' \
+    ~/myProject me@remote.server /var/www/html/myProject
 ```

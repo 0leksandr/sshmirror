@@ -178,18 +178,18 @@ func stopwatch(description string, operation func() bool) {
 }
 
 func main() {
-	localDir     := stripTrailSlash(flag.Arg(0))
-	remoteHost   := flag.Arg(1)
-	remoteDir    := stripTrailSlash(flag.Arg(2))
-	identityFile := *flag.String("i", "", "identity file (rsa)")
-	connTimeout  := *flag.Int("t", 5, "connection timeout (seconds)")
+	identityFile := flag.String("i", "", "identity file (rsa)")
+	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
+	ignoredFlag  := flag.String("ignored", "", "regexp pattern to ignore (f.e. '^\\.git/')")
+	flag.Parse()
 
 	var ignored *regexp.Regexp
-	if ignoredFlag := *flag.String("ignored", "", "regexp pattern to ignore (f.e. '^\\.git/')"); ignoredFlag != "" {
-		ignored = regexp.MustCompile(ignoredFlag)
-	}
+	if ignoredFlag != nil { ignored = regexp.MustCompile(*ignoredFlag) }
 
-	flag.Parse()
+	localDir   := stripTrailSlash(flag.Arg(0))
+	remoteHost := flag.Arg(1)
+	remoteDir  := stripTrailSlash(flag.Arg(2))
+
 	if flag.NArg() != 3 {
 		writeToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
 		flag.PrintDefaults()
@@ -204,9 +204,9 @@ func main() {
 
 	sshCmd := fmt.Sprintf(
 		"ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1",
-		connTimeout,
+		*connTimeout,
 	)
-	if identityFile != "" { sshCmd += " -i " + identityFile }
+	if identityFile != nil { sshCmd += " -i " + *identityFile }
 
 	go func() {
 		for {
@@ -216,14 +216,14 @@ func main() {
 				fmt.Sprintf(
 					"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
 					sshCmd,
-					connTimeout,
+					*connTimeout,
 					remoteHost,
 				),
 				func(string) { masterConnectionAlive = true },
 				func(string) { masterConnectionAlive = false },
 			)
 			masterConnectionAlive = false
-			time.Sleep(time.Duration(connTimeout) * time.Second)
+			time.Sleep(time.Duration(*connTimeout) * time.Second)
 		}
 	}()
 
