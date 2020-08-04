@@ -7,9 +7,12 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"os"
 	"os/exec"
+	"os/signal"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -94,47 +97,64 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 		}
 	}
 
-	if len(existing) > 0 {
-		info := fmt.Sprintf("uploading %d file(s)", len(existing))
-		if verbosity == 2 { info += fmt.Sprintf(" (%s)", strings.Join(existing, ", ")) }
-		stopwatch(
-			info,
-			func() bool {
-				return runCommand(
-					localSource,
-					fmt.Sprintf(
-						"rsync -azER -e '%s' %s %s:%s > /dev/null",
-						sshCmd,
-						strings.Join(existing, " "),
-						remoteHost,
-						remoteDestination,
-					),
-					nil,
-					nil,
-				)
-			},
-		)
-	}
-	if len(deleted) > 0 {
-		info := fmt.Sprintf("deleting %d file(s)", len(deleted))
-		if verbosity == 2 { info += fmt.Sprintf(" (%s)", strings.Join(deleted, ", ")) }
-		stopwatch(
-			info,
-			func() bool {
-				return runCommand(
-					localSource,
-					fmt.Sprintf(
-						"%s %s 'cd %s && rm -rf %s'",
-						sshCmd,
-						remoteHost,
-						remoteDestination,
-						strings.Join(deleted, " "),
-					),
-					nil,
-					nil,
-				)
-			},
-		)
+	operations := make([]func() bool, 0, 2)
+	operations = append(
+		operations,
+		func() bool {
+			if len(existing) == 0 { return true }
+			info := fmt.Sprintf("uploading %d file(s)", len(existing))
+			if verbosity == 2 { info += fmt.Sprintf(" (%s)", strings.Join(existing, ", ")) }
+			return stopwatch(
+				info,
+				func() bool {
+					return runCommand(
+						localSource,
+						fmt.Sprintf(
+							"rsync -azER -e '%s' %s %s:%s > /dev/null",
+							sshCmd,
+							strings.Join(existing, " "),
+							remoteHost,
+							remoteDestination,
+						),
+						nil,
+						nil,
+					)
+				},
+			)
+		},
+	)
+	operations = append(
+		operations,
+		func() bool {
+			if len(deleted) == 0 { return true }
+			info := fmt.Sprintf("deleting %d file(s)", len(deleted))
+			if verbosity == 2 { info += fmt.Sprintf(" (%s)", strings.Join(deleted, ", ")) }
+			return stopwatch(
+				info,
+				func() bool {
+					return runCommand(
+						localSource,
+						fmt.Sprintf(
+							"%s %s 'cd %s && rm -rf %s'",
+							sshCmd,
+							remoteHost,
+							remoteDestination,
+							strings.Join(deleted, " "),
+						),
+						nil,
+						nil,
+					)
+				},
+			)
+		},
+	)
+	for _, operation := range operations {
+		if !operation() {
+			files = append(files, existing...)
+			files = append(files, deleted...)
+			go syncFiles(localSource, remoteHost, remoteDestination, sshCmd, verbosity)
+			break
+		}
 	}
 
 	syncing = false
@@ -175,25 +195,34 @@ func stripTrailSlash(path string) string {
 	return path
 }
 
-func stopwatch(description string, operation func() bool) {
+func stopwatch(description string, operation func() bool) bool {
 	fmt.Print(description + "... ")
 	start := time.Now()
-	if operation() { fmt.Println("done in " + time.Since(start).String()) }
+	result := operation()
+	if result { fmt.Println("done in " + time.Since(start).String()) }
+	return result
 }
 
 func main() {
 	identityFile := flag.String("i", "", "identity file (rsa)")
 	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
-	ignoredFlag  := flag.String("ignored", "", "regexp pattern to ignore (f.e. '^\\.git/')")
+	exclude      := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
 	verbosity    := flag.Int("v", 1, "verbosity level (1-2)")
 	flag.Parse()
 
 	var ignored *regexp.Regexp
-	if ignoredFlag != nil { ignored = regexp.MustCompile(*ignoredFlag) }
+	if exclude != nil { ignored = regexp.MustCompile(*exclude) }
 
 	localDir   := stripTrailSlash(flag.Arg(0))
 	remoteHost := flag.Arg(1)
 	remoteDir  := stripTrailSlash(flag.Arg(2))
+
+	if localDir[:2] == "~/" {
+		usr, err := user.Current()
+		PanicIf(err)
+		dir := usr.HomeDir
+		localDir = filepath.Join(dir, localDir[2:])
+	}
 
 	if flag.NArg() != 3 {
 		writeToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
@@ -208,15 +237,33 @@ func main() {
 	}
 
 	sshCmd := fmt.Sprintf(
-		"ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1",
+		"ssh -o ControlMaster=auto -o ControlPath=/tmp/sshstream-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1",
 		*connTimeout,
 	)
 	if identityFile != nil { sshCmd += " -i " + *identityFile }
 
+	closeMaster := func() {
+		runCommand(
+			localDir,
+			fmt.Sprintf("%s -O exit %s 2>/dev/null", sshCmd, remoteHost),
+			nil,
+			nil,
+		)
+	}
+
+	exit := make(chan os.Signal)
+	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
 	go func() {
+		<-exit
+		closeMaster()
+		os.Exit(0)
+	}()
+
+	go func() {
+		closeMaster()
 		for {
 			fmt.Print("Establishing SSH Master connection... ")
-			runCommand( // TODO: defer close?
+			runCommand(
 				localDir,
 				fmt.Sprintf(
 					"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
@@ -235,6 +282,7 @@ func main() {
 	watchDirRecursive(
 		localDir,
 		func(filename string) {
+			// TODO: ignore ownership changes
 			filename = filename[len(localDir)+1:]
 
 			if ignored != nil && ignored.MatchString(filename) { return }
