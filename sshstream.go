@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -21,9 +22,24 @@ import (
 var files []string
 var watcher *fsnotify.Watcher
 
-var syncing bool
-var masterConnectionAlive bool
-var syncingAwait bool
+var syncing sync.WaitGroup
+var waitingMaster CountableWaitGroup
+var syncingQueued bool
+
+type CountableWaitGroup struct {
+	wg sync.WaitGroup
+	count int
+}
+func (wg *CountableWaitGroup) Add(c int) {
+	wg.count += c
+	wg.wg.Add(c)
+}
+func (wg *CountableWaitGroup) DoneAll() {
+	for wg.count > 0 { wg.Add(-1) }
+}
+func (wg *CountableWaitGroup) Wait() {
+	wg.wg.Wait()
+}
 
 func PanicIf(err error) {
 	if err != nil {
@@ -72,18 +88,17 @@ func fileExists(filename string) bool {
 }
 
 func syncFiles(localSource string, remoteHost string, remoteDestination string, sshCmd string, verbosity int) {
-	if syncingAwait { return }
-	syncingAwait = true
+	if syncingQueued { return }
+	syncingQueued = true
 
-	// TODO: something better
-	for !masterConnectionAlive { time.Sleep(100 * time.Millisecond) }
-	for syncing { time.Sleep(100 * time.Millisecond) }
+	waitingMaster.Wait()
+	syncing.Wait()
 
-	syncingAwait = false
+	syncingQueued = false
 
 	if len(files) == 0 { return }
 
-	syncing = true
+	syncing.Add(1)
 
 	filesUnique := make(map[string]interface{})
 	for _, file := range files { filesUnique[file] = nil }
@@ -159,7 +174,7 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 		}
 	}
 
-	syncing = false
+	syncing.Done()
 }
 
 func watchDirRecursive(path string, processor func(fsnotify.Event)) {
@@ -208,10 +223,8 @@ func stopwatch(description string, operation func() bool) bool {
 func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFunc {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	go func() {
-		select {
-			case <-ctx.Done():
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) { callback() }
-		}
+		<-ctx.Done()
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) { callback() }
 	}()
 	return &cancel
 }
@@ -273,6 +286,7 @@ func main() {
 	}()
 
 	go func() {
+		waitingMaster.Add(1)
 		closeMaster()
 		for {
 			fmt.Print("Establishing SSH Master connection... ")
@@ -284,10 +298,10 @@ func main() {
 					*connTimeout,
 					remoteHost,
 				),
-				func(string) { masterConnectionAlive = true },
-				func(string) { masterConnectionAlive = false },
+				func(string) { waitingMaster.DoneAll() },
+				nil,
 			)
-			masterConnectionAlive = false
+			waitingMaster.Add(1)
 			time.Sleep(time.Duration(*connTimeout) * time.Second)
 		}
 	}()
@@ -308,6 +322,8 @@ func main() {
 			doSync := func() {
 				(*cancelFirst)()
 				(*cancelLast)()
+				cancelFirst = nil
+				cancelLast = nil
 				syncFiles(localDir, remoteHost, remoteDir, sshCmd, *verbosity)
 			}
 
