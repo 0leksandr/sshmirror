@@ -160,7 +160,7 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 	syncing = false
 }
 
-func watchDirRecursive(path string, processor func(string)) {
+func watchDirRecursive(path string, processor func(fsnotify.Event)) {
 	var err error
 	watcher, err = fsnotify.NewWatcher()
 	PanicIf(err)
@@ -180,7 +180,7 @@ func watchDirRecursive(path string, processor func(string)) {
 	go func() {
 		for {
 			select {
-				case event := <-watcher.Events: processor(event.Name)
+				case event := <-watcher.Events: processor(event)
 				case err := <-watcher.Errors: PanicIf(err)
 			}
 		}
@@ -281,9 +281,10 @@ func main() {
 
 	watchDirRecursive(
 		localDir,
-		func(filename string) {
-			// TODO: ignore ownership changes
-			filename = filename[len(localDir)+1:]
+		func(event fsnotify.Event) {
+			if event.Op == fsnotify.Chmod { return }
+
+			filename := event.Name[len(localDir)+1:]
 
 			if ignored != nil && ignored.MatchString(filename) { return }
 
