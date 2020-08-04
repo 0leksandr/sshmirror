@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
@@ -203,6 +205,17 @@ func stopwatch(description string, operation func() bool) bool {
 	return result
 }
 
+func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFunc {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	go func() {
+		select {
+			case <-ctx.Done():
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) { callback() }
+		}
+	}()
+	return &cancel
+}
+
 func main() {
 	identityFile := flag.String("i", "", "identity file (rsa)")
 	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
@@ -279,6 +292,8 @@ func main() {
 		}
 	}()
 
+	var cancelFirst *context.CancelFunc
+	var cancelLast *context.CancelFunc
 	watchDirRecursive(
 		localDir,
 		func(event fsnotify.Event) {
@@ -288,22 +303,26 @@ func main() {
 
 			if ignored != nil && ignored.MatchString(filename) { return }
 
-			doSync := func() { syncFiles(localDir, remoteHost, remoteDir, sshCmd, *verbosity) }
+			files = append(files, filename)
 
-			if len(files) == 0 {
-				go func() {
-					time.Sleep(5 * time.Second)
-					doSync()
-				}()
+			doSync := func() {
+				(*cancelFirst)()
+				(*cancelLast)()
+				syncFiles(localDir, remoteHost, remoteDir, sshCmd, *verbosity)
 			}
 
-			go func() {
-				time.Sleep(500 * time.Millisecond)
-				isLast := (len(files) > 0) && (files[len(files)-1] == filename) // TODO: stop other threads instead
-				if isLast { doSync() }
-			}()
+			if cancelFirst == nil {
+				cancelFirst = cancellableTimer(
+					5 * time.Second,
+					doSync,
+				)
+			}
 
-			files = append(files, filename)
+			if cancelLast != nil { (*cancelLast)() }
+			cancelLast = cancellableTimer(
+				500 * time.Millisecond,
+				doSync,
+			)
 		},
 	)
 }
