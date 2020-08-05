@@ -114,64 +114,72 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 		}
 	}
 
-	operations := make([]func() bool, 0, 2)
-	operations = append(
-		operations,
-		func() bool {
-			if len(existing) == 0 { return true }
-			info := fmt.Sprintf("uploading %d file(s)", len(existing))
-			if verbosity == 2 { info += fmt.Sprintf(" (%s)", strings.Join(existing, ", ")) }
-			return stopwatch(
-				info,
-				func() bool {
-					return runCommand(
-						localSource,
-						fmt.Sprintf(
-							"rsync -azER -e '%s' %s %s:%s > /dev/null",
-							sshCmd,
-							strings.Join(existing, " "),
-							remoteHost,
-							remoteDestination,
-						),
-						nil,
-						nil,
-					)
-				},
+	commands := make(map[string]string)
+	if len(existing) > 0 {
+		commands[fmt.Sprintf("uploading %d file(s)", len(existing))] = fmt.Sprintf(
+			"rsync -azER -e '%s' %s %s:%s > /dev/null",
+			sshCmd,
+			strings.Join(existing, " "),
+			remoteHost,
+			remoteDestination,
+		)
+	}
+	if len(deleted) > 0 {
+		commands[fmt.Sprintf("deleting %d file(s)", len(deleted))] = fmt.Sprintf(
+			"%s %s 'cd %s && rm -rf %s'",
+			sshCmd,
+			remoteHost,
+			remoteDestination,
+			strings.Join(deleted, " "),
+		)
+	}
+
+	success := true
+	if verbosity == 0 || verbosity == 1 {
+		commands2 := make([]string, 0, len(commands))
+		for _, command := range commands { commands2 = append(commands2, command) }
+		operation := func() bool {
+			return runCommand(
+				localSource,
+				strings.Join(commands2, " && "),
+				nil,
+				nil,
 			)
-		},
-	)
-	operations = append(
-		operations,
-		func() bool {
-			if len(deleted) == 0 { return true }
-			info := fmt.Sprintf("deleting %d file(s)", len(deleted))
-			if verbosity == 2 { info += fmt.Sprintf(" (%s)", strings.Join(deleted, ", ")) }
-			return stopwatch(
-				info,
-				func() bool {
-					return runCommand(
-						localSource,
-						fmt.Sprintf(
-							"%s %s 'cd %s && rm -rf %s'",
-							sshCmd,
-							remoteHost,
-							remoteDestination,
-							strings.Join(deleted, " "),
-						),
-						nil,
-						nil,
-					)
-				},
-			)
-		},
-	)
-	for _, operation := range operations {
-		if !operation() {
-			files = append(files, existing...)
-			files = append(files, deleted...)
-			go syncFiles(localSource, remoteHost, remoteDestination, sshCmd, verbosity)
-			break
 		}
+		if verbosity == 0 {
+			success = operation()
+		} else {
+			description := make([]string, 0)
+			for symbol, nr := range map[string]int{
+				"+": len(existing),
+				"-": len(deleted),
+			} {
+				if nr > 0 { description = append(description, fmt.Sprintf("%s%d", symbol, nr)) }
+			}
+			success = stopwatch(strings.Join(description, " "), operation)
+		}
+	} else if verbosity == 2 || verbosity == 3 {
+		for description, command := range commands {
+			if verbosity == 3 { description = fmt.Sprintf("%s: %s", description, command) }
+			success = success && stopwatch(
+				description,
+				func() bool {
+					return runCommand(
+						localSource,
+						command,
+						nil,
+						nil,
+					)
+				},
+			)
+			if !success { break }
+		}
+	}
+
+	if !success {
+		files = append(files, existing...)
+		files = append(files, deleted...)
+		go syncFiles(localSource, remoteHost, remoteDestination, sshCmd, verbosity)
 	}
 
 	syncing.Done()
@@ -213,10 +221,24 @@ func stripTrailSlash(path string) string {
 }
 
 func stopwatch(description string, operation func() bool) bool {
-	fmt.Print(description + "... ")
+	fmt.Print(description)
 	start := time.Now()
+	var stopTicking *context.CancelFunc
+	var tick func()
+	tick = func() {
+		stopTicking = cancellableTimer(
+			time.Second,
+			func() {
+				fmt.Print(".")
+				tick()
+			},
+		)
+	}
+	tick()
+
 	result := operation()
-	if result { fmt.Println("done in " + time.Since(start).String()) }
+	if stopTicking != nil { (*stopTicking)() }
+	if result { fmt.Println(" done in " + time.Since(start).String()) }
 	return result
 }
 
@@ -233,11 +255,15 @@ func main() {
 	identityFile := flag.String("i", "", "identity file (rsa)")
 	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
 	exclude      := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
-	verbosity    := flag.Int("v", 1, "verbosity level (1-2)")
+	verbosity    := flag.Int("v", 2, "verbosity level (0-3)")
 	flag.Parse()
 
 	var ignored *regexp.Regexp
-	if exclude != nil { ignored = regexp.MustCompile(*exclude) }
+	if exclude != nil {
+		var err error
+		ignored, err = regexp.Compile(*exclude)
+		PanicIf(err)
+	}
 
 	localDir   := stripTrailSlash(flag.Arg(0))
 	remoteHost := flag.Arg(1)
@@ -272,6 +298,12 @@ func main() {
 		runCommand(
 			localDir,
 			fmt.Sprintf("%s -O exit %s 2>/dev/null", sshCmd, remoteHost),
+			nil,
+			nil,
+		)
+		runCommand(
+			localDir,
+			fmt.Sprintf("rm -f /tmp/sshstream-%s:22", remoteHost),
 			nil,
 			nil,
 		)
