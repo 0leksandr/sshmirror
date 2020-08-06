@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -50,6 +51,8 @@ var identityFile *string
 var connTimeout int
 var ignored *regexp.Regexp
 var verbosity int
+
+var controlPath string
 
 func PanicIf(err error) {
 	if err != nil {
@@ -226,7 +229,7 @@ func watchDirRecursive(path string, processor func(fsnotify.Event)) {
 
 func stripTrailSlash(path string) string {
 	last := len(path) - 1
-	if (len(path) > 0) && (path[last:] == "/") { path = path[:last] }
+	if (len(path) > 0) && (path[last:] == "/" || path[last:] == "\\") { path = path[:last] }
 	return path
 }
 
@@ -302,31 +305,21 @@ func parseArguments() {
 }
 
 func masterConnection(sshCmd string) {
-	closeMaster := func() {
+	exit := make(chan os.Signal)
+	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-exit
 		runCommand(
 			localDir,
 			fmt.Sprintf("%s -O exit %s 2>/dev/null", sshCmd, remoteHost),
 			nil,
 			nil,
 		)
-		runCommand(
-			localDir,
-			fmt.Sprintf("rm -f /tmp/sshstream-%s:22", remoteHost),
-			nil,
-			nil,
-		)
-	}
-
-	exit := make(chan os.Signal)
-	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-exit
-		closeMaster()
+		_ = os.Remove(controlPath)
 		os.Exit(0)
 	}()
 
 	waitingMaster.Add(1)
-	closeMaster()
 	for {
 		fmt.Print("Establishing SSH Master connection... ")
 		runCommand(
@@ -348,8 +341,13 @@ func masterConnection(sshCmd string) {
 func main() {
 	parseArguments()
 
+	controlPathFile, err := ioutil.TempFile("", "sshstream-")
+	PanicIf(err)
+	controlPath = controlPathFile.Name()
+
 	sshCmd := fmt.Sprintf(
-		"ssh -o ControlMaster=auto -o ControlPath=/tmp/sshstream-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1",
+		"ssh -o ControlMaster=auto -o ControlPath=%s -o ConnectTimeout=%d -o ConnectionAttempts=1",
+		controlPath,
 		connTimeout,
 	)
 	if identityFile != nil { sshCmd += " -i " + *identityFile }
