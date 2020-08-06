@@ -22,10 +22,10 @@ import (
 var files []string
 var watcher *fsnotify.Watcher
 
+// lockers
 var syncing sync.WaitGroup
 var waitingMaster CountableWaitGroup
 var syncingQueued bool
-
 type CountableWaitGroup struct {
 	wg sync.WaitGroup
 	count int
@@ -40,6 +40,16 @@ func (wg *CountableWaitGroup) DoneAll() {
 func (wg *CountableWaitGroup) Wait() {
 	wg.wg.Wait()
 }
+
+// parameters
+var localDir string
+var remoteHost string
+var remoteDir string
+// flags
+var identityFile *string
+var connTimeout int
+var ignored *regexp.Regexp
+var verbosity int
 
 func PanicIf(err error) {
 	if err != nil {
@@ -87,7 +97,7 @@ func fileExists(filename string) bool {
 	return !os.IsNotExist(err)
 }
 
-func syncFiles(localSource string, remoteHost string, remoteDestination string, sshCmd string, verbosity int) {
+func syncFiles(sshCmd string) {
 	if syncingQueued { return }
 	syncingQueued = true
 
@@ -107,7 +117,7 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 	existing := make([]string, 0)
 	deleted := make([]string, 0)
 	for file := range filesUnique {
-		if fileExists(localSource + "/" + file) {
+		if fileExists(localDir + "/" + file) {
 			existing = append(existing, file)
 		} else {
 			deleted = append(deleted, file)
@@ -121,7 +131,7 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 			sshCmd,
 			strings.Join(existing, " "),
 			remoteHost,
-			remoteDestination,
+			remoteDir,
 		)
 	}
 	if len(deleted) > 0 {
@@ -129,7 +139,7 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 			"%s %s 'cd %s && rm -rf %s'",
 			sshCmd,
 			remoteHost,
-			remoteDestination,
+			remoteDir,
 			strings.Join(deleted, " "),
 		)
 	}
@@ -140,7 +150,7 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 		for _, command := range commands { commands2 = append(commands2, command) }
 		operation := func() bool {
 			return runCommand(
-				localSource,
+				localDir,
 				strings.Join(commands2, " && "),
 				nil,
 				nil,
@@ -165,7 +175,7 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 				description,
 				func() bool {
 					return runCommand(
-						localSource,
+						localDir,
 						command,
 						nil,
 						nil,
@@ -179,7 +189,7 @@ func syncFiles(localSource string, remoteHost string, remoteDestination string, 
 	if !success {
 		files = append(files, existing...)
 		files = append(files, deleted...)
-		go syncFiles(localSource, remoteHost, remoteDestination, sshCmd, verbosity)
+		go syncFiles(sshCmd)
 	}
 
 	syncing.Done()
@@ -227,7 +237,7 @@ func stopwatch(description string, operation func() bool) bool {
 	var tick func()
 	tick = func() {
 		stopTicking = cancellableTimer(
-			time.Second,
+			1 * time.Second,
 			func() {
 				fmt.Print(".")
 				tick()
@@ -251,23 +261,25 @@ func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFun
 	return &cancel
 }
 
-func main() {
-	identityFile := flag.String("i", "", "identity file (rsa)")
-	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
-	exclude      := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
-	verbosity    := flag.Int("v", 2, "verbosity level (0-3)")
+func parseArguments() {
+	identityFile     = flag.String("i", "", "identity file (rsa)")
+	connTimeoutFlag := flag.Int("t", 5, "connection timeout (seconds)")
+	verbosityFlag   := flag.Int("v", 2, "verbosity level (0-3)")
+	exclude         := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
+
 	flag.Parse()
 
-	var ignored *regexp.Regexp
+	connTimeout = *connTimeoutFlag
+	verbosity   = *verbosityFlag
 	if exclude != nil {
 		var err error
 		ignored, err = regexp.Compile(*exclude)
 		PanicIf(err)
 	}
 
-	localDir   := stripTrailSlash(flag.Arg(0))
-	remoteHost := flag.Arg(1)
-	remoteDir  := stripTrailSlash(flag.Arg(2))
+	localDir   = stripTrailSlash(flag.Arg(0))
+	remoteHost = flag.Arg(1)
+	remoteDir  = stripTrailSlash(flag.Arg(2))
 
 	if localDir[:2] == "~/" {
 		usr, err := user.Current()
@@ -281,19 +293,15 @@ func main() {
 		flag.PrintDefaults()
 		writeToStderr(
 			"Required parameters:\n" +
-			"  SOURCE - local directory (absolute path)\n" +
-			"  HOST (IP or HOST or USER@HOST)\n" +
-			"  DESTINATION - remote directory (absolute path)]",
+				"  SOURCE - local directory (absolute path)\n" +
+				"  HOST (IP or HOST or USER@HOST)\n" +
+				"  DESTINATION - remote directory (absolute path)]",
 		)
 		return
 	}
+}
 
-	sshCmd := fmt.Sprintf(
-		"ssh -o ControlMaster=auto -o ControlPath=/tmp/sshstream-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1",
-		*connTimeout,
-	)
-	if identityFile != nil { sshCmd += " -i " + *identityFile }
-
+func masterConnection(sshCmd string) {
 	closeMaster := func() {
 		runCommand(
 			localDir,
@@ -317,26 +325,36 @@ func main() {
 		os.Exit(0)
 	}()
 
-	go func() {
+	waitingMaster.Add(1)
+	closeMaster()
+	for {
+		fmt.Print("Establishing SSH Master connection... ")
+		runCommand(
+			localDir,
+			fmt.Sprintf(
+				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
+				sshCmd,
+				connTimeout,
+				remoteHost,
+			),
+			func(string) { waitingMaster.DoneAll() },
+			nil,
+		)
 		waitingMaster.Add(1)
-		closeMaster()
-		for {
-			fmt.Print("Establishing SSH Master connection... ")
-			runCommand(
-				localDir,
-				fmt.Sprintf(
-					"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
-					sshCmd,
-					*connTimeout,
-					remoteHost,
-				),
-				func(string) { waitingMaster.DoneAll() },
-				nil,
-			)
-			waitingMaster.Add(1)
-			time.Sleep(time.Duration(*connTimeout) * time.Second)
-		}
-	}()
+		time.Sleep(time.Duration(connTimeout) * time.Second)
+	}
+}
+
+func main() {
+	parseArguments()
+
+	sshCmd := fmt.Sprintf(
+		"ssh -o ControlMaster=auto -o ControlPath=/tmp/sshstream-%%r@%%h:%%p -o ConnectTimeout=%d -o ConnectionAttempts=1",
+		connTimeout,
+	)
+	if identityFile != nil { sshCmd += " -i " + *identityFile }
+
+	go masterConnection(sshCmd)
 
 	var cancelFirst *context.CancelFunc
 	var cancelLast *context.CancelFunc
@@ -356,7 +374,7 @@ func main() {
 				(*cancelLast)()
 				cancelFirst = nil
 				cancelLast = nil
-				syncFiles(localDir, remoteHost, remoteDir, sshCmd, *verbosity)
+				syncFiles(sshCmd)
 			}
 
 			if cancelFirst == nil {

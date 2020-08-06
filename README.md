@@ -4,15 +4,15 @@ Basic usage scenario - local development with constant uploading to remote serve
 
 Example usage:
 
-- establish connection:
+- start program:
   ```shell script
   sshstream \
       -i=~/.ssh/my_rsa \
-      -t=5 \
       -e='(^\.git/|^\.idea/|~$)' \
       ~/myProject me@remote.server /var/www/html/myProject
   ```
 - make some changes to files in your local directory (create/edit/move/delete)
+- see them being reflected on remote server
 
 Proc:
 - speed (especially on slow connections). See sample benchmark:
@@ -26,9 +26,10 @@ Cons:
 
 Features:
 - using `rsync` for transferring files
-- transferring in batches instead of one-by-one. General rules for grouping files into a batch are:
-  - last modification was made ≥0.5s ago
-  - first modification was made ≥5s ago, and since then new modification occur constantly (without break for 0.5s)
+- transferring in batches instead of one-by-one. General rules for grouping files in queue into a batch are:
+  - last modification was made 0.5sec ago
+  - first modification was made 5sec ago, and since then new modifications occur constantly (without break for 0.5sec)
 - using `ssh` "Master connection" feature to keep one constant connection. Thus, once-in-a-while uploads do not need to establish connection over again
+- FS modifications tracked by `fsnotify`. Credits: https://github.com/fsnotify/fsnotify
 
 Please submit bugs reports to https://github.com/0leksandr/sshstream/issues
