@@ -3,14 +3,19 @@ A fast, real-time, continuous, one-directional (local⇒remove) SSH filesystem s
 Basic usage scenario - local development with constant uploading to remote server via SSH. So basically, a fast alternative to SFTP manager of Jetbrains IDEs.
 
 Example usage:
-
+- download binary for your OS and architecture [here](https://github.com/0leksandr/sshstream/releases/latest)
 - start program:
   ```shell script
-  sshstream \
+  ./sshstream \
       -i=~/.ssh/my_rsa \
       -e='(^\.git/|^\.idea/|~$)' \
       ~/myProject me@remote.server /var/www/html/myProject
   ```
+  where:
+  - `~/myProject` - LOCAL (source) directory to be read from
+  - `me@remote.server` - address and username (if needed) for remote server
+  - `/var/www/html/myProject` - REMOTE (destination) directory to be written to  
+  (see all possible flags and description with `./sshstream -h`)
 - make some changes to files in your local directory (create/edit/move/delete)
 - see them being reflected on remote server
 
@@ -26,10 +31,10 @@ Cons:
 
 Features:
 - using `rsync` for transferring files
-- transferring in batches instead of one-by-one. General rules for grouping files in queue into a batch are:
+- transferring in batches instead of one-by-one. General rules for grouping files in the queue into a batch are:
   - last modification was made 0.5sec ago
   - first modification was made 5sec ago, and since then new modifications occur constantly (without break for 0.5sec)
 - using `ssh` "Master connection" feature to keep one constant connection. Thus, once-in-a-while uploads do not need to establish connection over again
-- FS modifications tracked by `fsnotify`. Credits: https://github.com/fsnotify/fsnotify
+- filesystem events (modifications) tracked by `fsnotify`. Credits: https://github.com/fsnotify/fsnotify
 
 Please submit bugs reports to https://github.com/0leksandr/sshstream/issues
