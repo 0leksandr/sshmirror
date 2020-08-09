@@ -3,7 +3,8 @@ A fast, real-time, continuous, one-directional (local⇒remove) SSH filesystem s
 Basic usage scenario - local development with constant uploading to remote server via SSH. So basically, a fast alternative to SFTP manager of Jetbrains IDEs.
 
 Example usage:
-- download binary for your OS and architecture [here](https://github.com/0leksandr/sshmirror/releases/latest)
+- download binary for your OS and architecture [here](https://github.com/0leksandr/sshmirror/releases/latest) (please note: initially developed for Linux-amd64, not tested on other platforms, thus may not work properly there)
+- ensure you have `ssh` and `rsync` binaries installed system-wide
 - start program:
   ```shell script
   ./sshmirror \
