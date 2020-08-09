@@ -3,10 +3,10 @@ A fast, real-time, continuous, one-directional (local⇒remove) SSH filesystem s
 Basic usage scenario - local development with constant uploading to remote server via SSH. So basically, a fast alternative to SFTP manager of Jetbrains IDEs.
 
 Example usage:
-- download binary for your OS and architecture [here](https://github.com/0leksandr/sshstream/releases/latest)
+- download binary for your OS and architecture [here](https://github.com/0leksandr/sshmirror/releases/latest)
 - start program:
   ```shell script
-  ./sshstream \
+  ./sshmirror \
       -i=~/.ssh/my_rsa \
       -e='(^\.git/|^\.idea/|~$)' \
       ~/myProject me@remote.server /var/www/html/myProject
@@ -15,7 +15,7 @@ Example usage:
   - `~/myProject` - LOCAL (source) directory to be read from
   - `me@remote.server` - address and username (if needed) for remote server
   - `/var/www/html/myProject` - REMOTE (destination) directory to be written to  
-  (see all possible flags and description with `./sshstream -h`)
+  (see all possible flags and description with `./sshmirror -h`)
 - make some changes to files in your local directory (create/edit/move/delete)
 - see them being reflected on remote server
 
@@ -23,7 +23,7 @@ Proc:
 - speed (especially on slow connections). See sample benchmark:
   - switching between `git` branches with total difference of 30 files (550Kb)
     - PhpStorm: 1.5min
-    - `sshstream`: 3sec
+    - `sshmirror`: 3sec
 
 Cons:
 - one-directional. So, to check remote files, you'll have to use other tools
@@ -37,4 +37,4 @@ Features:
 - using `ssh` "Master connection" feature to keep one constant connection. Thus, once-in-a-while uploads do not need to establish connection over again
 - filesystem events (modifications) tracked by `fsnotify`. Credits: https://github.com/fsnotify/fsnotify
 
-Please submit bugs reports to https://github.com/0leksandr/sshstream/issues
+Please submit bugs reports to https://github.com/0leksandr/sshmirror/issues

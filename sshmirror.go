@@ -213,18 +213,12 @@ func watchDirRecursive(path string, processor func(fsnotify.Event)) {
 		},
 	))
 
-	done := make(chan bool)
-
-	go func() {
-		for {
-			select {
-				case event := <-watcher.Events: processor(event)
-				case err := <-watcher.Errors: PanicIf(err)
-			}
+	for {
+		select {
+			case event := <-watcher.Events: processor(event)
+			case err := <-watcher.Errors: PanicIf(err)
 		}
-	}()
-
-	<-done
+	}
 }
 
 func stripTrailSlash(path string) string {
@@ -250,7 +244,7 @@ func stopwatch(description string, operation func() bool) bool {
 	tick()
 
 	result := operation()
-	if stopTicking != nil { (*stopTicking)() }
+	(*stopTicking)()
 	if result { fmt.Println(" done in " + time.Since(start).String()) }
 	return result
 }
@@ -272,6 +266,18 @@ func parseArguments() {
 
 	flag.Parse()
 
+	if flag.NArg() != 3 {
+		writeToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
+		flag.PrintDefaults()
+		writeToStderr(
+			"Required parameters:\n" +
+				"  SOURCE - local directory (absolute path)\n" +
+				"  HOST (IP or HOST or USER@HOST)\n" +
+				"  DESTINATION - remote directory (absolute path)]",
+		)
+		os.Exit(1)
+	}
+
 	connTimeout = *connTimeoutFlag
 	verbosity   = *verbosityFlag
 	if exclude != nil {
@@ -290,36 +296,29 @@ func parseArguments() {
 		dir := usr.HomeDir
 		localDir = filepath.Join(dir, localDir[2:])
 	}
-
-	if flag.NArg() != 3 {
-		writeToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
-		flag.PrintDefaults()
-		writeToStderr(
-			"Required parameters:\n" +
-				"  SOURCE - local directory (absolute path)\n" +
-				"  HOST (IP or HOST or USER@HOST)\n" +
-				"  DESTINATION - remote directory (absolute path)]",
-		)
-		return
-	}
 }
 
 func masterConnection(sshCmd string) {
-	exit := make(chan os.Signal)
-	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-exit
+	closeMaster := func() {
 		runCommand(
 			localDir,
 			fmt.Sprintf("%s -O exit %s 2>/dev/null", sshCmd, remoteHost),
 			nil,
 			nil,
 		)
+	}
+
+	exit := make(chan os.Signal)
+	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-exit
+		closeMaster()
 		_ = os.Remove(controlPath)
 		os.Exit(0)
 	}()
 
 	waitingMaster.Add(1)
+	closeMaster()
 	for {
 		fmt.Print("Establishing SSH Master connection... ")
 		runCommand(
@@ -333,6 +332,7 @@ func masterConnection(sshCmd string) {
 			func(string) { waitingMaster.DoneAll() },
 			nil,
 		)
+		closeMaster()
 		waitingMaster.Add(1)
 		time.Sleep(time.Duration(connTimeout) * time.Second)
 	}
@@ -341,9 +341,10 @@ func masterConnection(sshCmd string) {
 func main() {
 	parseArguments()
 
-	controlPathFile, err := ioutil.TempFile("", "sshstream-")
+	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
 	PanicIf(err)
 	controlPath = controlPathFile.Name()
+	PanicIf(os.Remove(controlPath))
 
 	sshCmd := fmt.Sprintf(
 		"ssh -o ControlMaster=auto -o ControlPath=%s -o ConnectTimeout=%d -o ConnectionAttempts=1",

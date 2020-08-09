@@ -1,4 +1,4 @@
-module github.com/0leksandr/sshstream
+module github.com/0leksandr/sshmirror
 
 go 1.13
 
