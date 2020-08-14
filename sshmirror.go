@@ -357,6 +357,14 @@ func main() {
 
 	var cancelFirst *context.CancelFunc
 	var cancelLast *context.CancelFunc
+	doSync := func() {
+		(*cancelFirst)()
+		(*cancelLast)()
+		cancelFirst = nil
+		cancelLast = nil
+		syncFiles(sshCmd)
+	}
+
 	watchDirRecursive(
 		localDir,
 		func(event fsnotify.Event) {
@@ -368,26 +376,10 @@ func main() {
 
 			files = append(files, filename)
 
-			doSync := func() {
-				(*cancelFirst)()
-				(*cancelLast)()
-				cancelFirst = nil
-				cancelLast = nil
-				syncFiles(sshCmd)
-			}
-
-			if cancelFirst == nil {
-				cancelFirst = cancellableTimer(
-					5 * time.Second,
-					doSync,
-				)
-			}
+			if cancelFirst == nil { cancelFirst = cancellableTimer(5 * time.Second, doSync) }
 
 			if cancelLast != nil { (*cancelLast)() }
-			cancelLast = cancellableTimer(
-				500 * time.Millisecond,
-				doSync,
-			)
+			cancelLast = cancellableTimer(500 * time.Millisecond, doSync)
 		},
 	)
 }
