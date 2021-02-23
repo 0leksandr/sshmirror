@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -21,7 +22,6 @@ import (
 )
 
 var files []string
-var watcher *fsnotify.Watcher
 
 // lockers
 var syncing sync.WaitGroup
@@ -52,7 +52,106 @@ var connTimeout int
 var ignored *regexp.Regexp
 var verbosity int
 
-var controlPath string
+type RemoteClient interface {
+	io.Closer
+	Upload(filenames []string) bool
+	Delete(filenames []string) bool
+}
+
+type sshClient struct {
+	RemoteClient
+	localDir    string
+	remoteHost  string
+	remoteDir   string
+	connTimeout int
+	sshCmd      string
+	controlPath string
+}
+func newSSHClient(identityFile *string) *sshClient {
+	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
+	PanicIf(err)
+	controlPath := controlPathFile.Name()
+	PanicIf(os.Remove(controlPath))
+
+	sshCmd := fmt.Sprintf(
+		"ssh -o ControlMaster=auto -o ControlPath=%s -o ConnectTimeout=%d -o ConnectionAttempts=1",
+		controlPath,
+		connTimeout,
+	)
+	if identityFile != nil { sshCmd += " -i " + *identityFile }
+
+	client := &sshClient{
+		localDir:    localDir,
+		remoteHost:  remoteHost,
+		remoteDir:   remoteDir,
+		connTimeout: connTimeout,
+		sshCmd:      sshCmd,
+		controlPath: controlPath,
+	}
+
+	go client.masterConnection()
+
+	return client
+}
+func (client *sshClient) masterConnection() {
+	waitingMaster.Add(1)
+	client.closeMaster()
+	for {
+		fmt.Print("Establishing SSH Master connection... ")
+		client.runCommand(
+			fmt.Sprintf(
+				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
+				client.sshCmd,
+				client.connTimeout,
+				client.remoteHost,
+			),
+			func(string) { waitingMaster.DoneAll() },
+		)
+		client.closeMaster()
+		waitingMaster.Add(1)
+		time.Sleep(time.Duration(client.connTimeout) * time.Second)
+	}
+}
+func (client *sshClient) closeMaster() {
+	client.runCommand(fmt.Sprintf("%s -O exit %s 2>/dev/null", client.sshCmd, client.remoteHost), nil)
+}
+func (client *sshClient) Close() error {
+	client.closeMaster()
+	_ = os.Remove(client.controlPath)
+	return nil
+}
+func (client *sshClient) runCommand(command string, onStdout func(string)) bool {
+	return runCommand(
+		client.localDir,
+		command,
+		onStdout,
+		nil,
+	)
+}
+func (client *sshClient) Upload(filenames []string) bool {
+	return client.runCommand(
+		fmt.Sprintf(
+			"rsync -azER -e '%s' %s %s:%s > /dev/null",
+			client.sshCmd,
+			strings.Join(filenames, " "),
+			client.remoteHost,
+			client.remoteDir,
+		),
+		nil,
+	)
+}
+func (client *sshClient) Delete(filenames []string) bool {
+	return client.runCommand(
+		fmt.Sprintf(
+			"%s %s 'cd %s && rm -rf %s'",
+			client.sshCmd,
+			client.remoteHost,
+			client.remoteDir,
+			strings.Join(filenames, " "),
+		),
+		nil,
+	)
+}
 
 func PanicIf(err error) {
 	if err != nil {
@@ -100,7 +199,7 @@ func fileExists(filename string) bool {
 	return !os.IsNotExist(err)
 }
 
-func syncFiles(sshCmd string) {
+func syncFiles(client RemoteClient) {
 	if syncingQueued { return }
 	syncingQueued = true
 
@@ -127,80 +226,63 @@ func syncFiles(sshCmd string) {
 		}
 	}
 
-	commands := make(map[string]string)
+	operations := make([]func() bool, 0)
 	if len(existing) > 0 {
-		commands[fmt.Sprintf("uploading %d file(s)", len(existing))] = fmt.Sprintf(
-			"rsync -azER -e '%s' %s %s:%s > /dev/null",
-			sshCmd,
-			strings.Join(existing, " "),
-			remoteHost,
-			remoteDir,
-		)
+		operations = append(operations, func() bool { return client.Upload(existing) })
 	}
 	if len(deleted) > 0 {
-		commands[fmt.Sprintf("deleting %d file(s)", len(deleted))] = fmt.Sprintf(
-			"%s %s 'cd %s && rm -rf %s'",
-			sshCmd,
-			remoteHost,
-			remoteDir,
-			strings.Join(deleted, " "),
-		)
+		operations = append(operations, func() bool { return client.Delete(deleted) })
 	}
 
-	success := true
-	if verbosity == 0 || verbosity == 1 {
-		commands2 := make([]string, 0, len(commands))
-		for _, command := range commands { commands2 = append(commands2, command) }
-		operation := func() bool {
-			return runCommand(
-				localDir,
-				strings.Join(commands2, " && "),
-				nil,
-				nil,
-			)
-		}
-		if verbosity == 0 {
-			success = operation()
-		} else {
-			description := make([]string, 0)
-			for symbol, nr := range map[string]int{
-				"+": len(existing),
-				"-": len(deleted),
-			} {
-				if nr > 0 { description = append(description, fmt.Sprintf("%s%d", symbol, nr)) }
+	result := true
+	if verbosity == 0 {
+		if len(existing) > 0 { result = result && client.Upload(existing) }
+		if len(deleted) > 0 { result = result && client.Delete(deleted) }
+	} else {
+		if len(existing) > 0 {
+			var uploadMessage string
+			if verbosity == 1 {
+				uploadMessage = fmt.Sprintf("+%d", len(existing))
+			} else {
+				uploadMessage = fmt.Sprintf("uploading %d file(s)", len(existing))
+				if verbosity == 3 {
+					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(existing, " "))
+				}
 			}
-			success = stopwatch(strings.Join(description, " "), operation)
-		}
-	} else if verbosity == 2 || verbosity == 3 {
-		for description, command := range commands {
-			if verbosity == 3 { description = fmt.Sprintf("%s: %s", description, command) }
-			success = success && stopwatch(
-				description,
-				func() bool {
-					return runCommand(
-						localDir,
-						command,
-						nil,
-						nil,
-					)
-				},
+			result = stopwatch(
+				uploadMessage,
+				func() bool { return client.Upload(existing) },
 			)
-			if !success { break }
+		}
+
+		if result && len(deleted) > 0 {
+			var uploadMessage string
+			if verbosity == 1 {
+				uploadMessage = fmt.Sprintf("-%d", len(deleted))
+			} else {
+				uploadMessage = fmt.Sprintf("deleting %d file(s)", len(deleted))
+				if verbosity == 3 {
+					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(deleted, " "))
+				}
+			}
+			result = stopwatch(
+				uploadMessage,
+				func() bool { return client.Delete(deleted) },
+			)
 		}
 	}
 
-	if !success {
+	if !result {
 		files = append(files, existing...)
 		files = append(files, deleted...)
-		go syncFiles(sshCmd)
+		go syncFiles(client)
 	}
 
 	syncing.Done()
 }
 
 func watchDirRecursive(path string, processor func(fsnotify.Event)) {
-	var err error
-	watcher, err = fsnotify.NewWatcher()
+	watcher, err := fsnotify.NewWatcher()
 	PanicIf(err)
 	defer func() { PanicIf(watcher.Close()) }()
 
@@ -298,62 +380,18 @@ func parseArguments() {
 	}
 }
 
-func masterConnection(sshCmd string) {
-	closeMaster := func() {
-		runCommand(
-			localDir,
-			fmt.Sprintf("%s -O exit %s 2>/dev/null", sshCmd, remoteHost),
-			nil,
-			nil,
-		)
-	}
+func main() {
+	parseArguments()
+
+	client := newSSHClient(identityFile)
 
 	exit := make(chan os.Signal)
 	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-exit
-		closeMaster()
-		_ = os.Remove(controlPath)
+		_ = client.Close()
 		os.Exit(0)
 	}()
-
-	waitingMaster.Add(1)
-	closeMaster()
-	for {
-		fmt.Print("Establishing SSH Master connection... ")
-		runCommand(
-			localDir,
-			fmt.Sprintf(
-				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
-				sshCmd,
-				connTimeout,
-				remoteHost,
-			),
-			func(string) { waitingMaster.DoneAll() },
-			nil,
-		)
-		closeMaster()
-		waitingMaster.Add(1)
-		time.Sleep(time.Duration(connTimeout) * time.Second)
-	}
-}
-
-func main() {
-	parseArguments()
-
-	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
-	PanicIf(err)
-	controlPath = controlPathFile.Name()
-	PanicIf(os.Remove(controlPath))
-
-	sshCmd := fmt.Sprintf(
-		"ssh -o ControlMaster=auto -o ControlPath=%s -o ConnectTimeout=%d -o ConnectionAttempts=1",
-		controlPath,
-		connTimeout,
-	)
-	if identityFile != nil { sshCmd += " -i " + *identityFile }
-
-	go masterConnection(sshCmd)
 
 	var cancelFirst *context.CancelFunc
 	var cancelLast *context.CancelFunc
@@ -362,7 +400,7 @@ func main() {
 		(*cancelLast)()
 		cancelFirst = nil
 		cancelLast = nil
-		syncFiles(sshCmd)
+		syncFiles(client)
 	}
 
 	watchDirRecursive(
