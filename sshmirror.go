@@ -95,11 +95,6 @@ func writeToStderr(text string) {
 	PanicIf(err)
 }
 
-func fileExists(filename string) bool {
-	_, err := os.Stat(filename)
-	return !os.IsNotExist(err)
-}
-
 func syncFiles(sshCmd string) {
 	if syncingQueued { return }
 	syncingQueued = true
@@ -117,13 +112,20 @@ func syncFiles(sshCmd string) {
 	for _, file := range files { filesUnique[file] = nil }
 	files = make([]string, 0)
 
+	fileExists := func(filename string) bool {
+		_, err := os.Stat(filename)
+		return !os.IsNotExist(err)
+	}
+	escapeFile := func(file string) string {
+		return fmt.Sprintf("'%s'", file) // TODO: escape "'", "\" and special symbols
+	}
 	existing := make([]string, 0)
 	deleted := make([]string, 0)
 	for file := range filesUnique {
 		if fileExists(localDir + "/" + file) {
-			existing = append(existing, file)
+			existing = append(existing, escapeFile(file))
 		} else {
-			deleted = append(deleted, file)
+			deleted = append(deleted, escapeFile(file))
 		}
 	}
 
@@ -221,12 +223,6 @@ func watchDirRecursive(path string, processor func(fsnotify.Event)) {
 	}
 }
 
-func stripTrailSlash(path string) string {
-	last := len(path) - 1
-	if (len(path) > 0) && (path[last:] == "/" || path[last:] == "\\") { path = path[:last] }
-	return path
-}
-
 func stopwatch(description string, operation func() bool) bool {
 	fmt.Print(description)
 	start := time.Now()
@@ -286,6 +282,11 @@ func parseArguments() {
 		PanicIf(err)
 	}
 
+	stripTrailSlash := func(path string) string {
+		last := len(path) - 1
+		if (len(path) > 0) && (path[last:] == "/" || path[last:] == "\\") { path = path[:last] }
+		return path
+	}
 	localDir   = stripTrailSlash(flag.Arg(0))
 	remoteHost = flag.Arg(1)
 	remoteDir  = stripTrailSlash(flag.Arg(2))

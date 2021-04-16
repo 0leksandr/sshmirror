@@ -10,7 +10,7 @@ Basic usage scenario - local development with constant uploading to remote serve
 
 #### Example usage:
 - download binary for your OS and architecture [here](https://github.com/0leksandr/sshmirror/releases/latest) (please note: initially developed for Linux-amd64, not tested on other platforms, thus may not work properly there)
-- ensure, that you have `ssh` and `rsync` binaries installed system-wide:
+- ensure, that you have `ssh` and `rsync` binaries installed system-wide (locally, and on remote server):
   ```shell script
   sudo apt-get install ssh rsync
   ```
@@ -36,7 +36,7 @@ Basic usage scenario - local development with constant uploading to remote serve
     - `sshmirror`: 3sec
 
 #### Cons:
-- one-directional. So, to check remote files, you'll have to use other tools
+- one-directional. So, to check remote files, you'll have to use other tools (f.e. `sshfs`)
 - no visible speed-up on frequent uploading of singular files (speed-up is ≈10%)
 
 #### Features:
