@@ -1,4 +1,5 @@
 #### Synopsis:
+[Download](https://github.com/0leksandr/sshmirror/releases/latest)
 ```shell script
 ./sshmirror ~/local/dir username@remote.server /remote/dir
 ```
