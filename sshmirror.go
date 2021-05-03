@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -9,7 +8,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"os/signal"
 	"os/user"
 	"path/filepath"
@@ -53,47 +51,6 @@ var ignored *regexp.Regexp
 var verbosity int
 
 var controlPath string
-
-func PanicIf(err error) {
-	if err != nil {
-		fmt.Println(err.Error())
-		panic(err)
-	}
-}
-
-func runCommand(dir string, cmd string, onStdout func(string), onStderr func(string)) bool {
-	command := exec.Command("sh", "-c", cmd)
-	command.Dir = dir
-
-	stdout, err := command.StdoutPipe()
-	PanicIf(err)
-	stdoutScanner := bufio.NewScanner(stdout)
-	go func() {
-		for stdoutScanner.Scan() {
-			stdout := stdoutScanner.Text()
-			fmt.Println(stdout)
-			if onStdout != nil { onStdout(stdout) }
-		}
-	}()
-
-	stderr, err := command.StderrPipe()
-	PanicIf(err)
-	stderrScanner := bufio.NewScanner(stderr)
-	go func() {
-		for stderrScanner.Scan() {
-			stderr := stderrScanner.Text()
-			writeToStderr(stderr)
-			if onStderr != nil { onStderr(stderr) }
-		}
-	}()
-
-	return command.Run() == nil
-}
-
-func writeToStderr(text string) {
-	_, err := fmt.Fprintln(os.Stderr, text)
-	PanicIf(err)
-}
 
 func syncFiles(sshCmd string) {
 	if syncingQueued { return }
@@ -154,11 +111,11 @@ func syncFiles(sshCmd string) {
 		commands2 := make([]string, 0, len(commands))
 		for _, command := range commands { commands2 = append(commands2, command) }
 		operation := func() bool {
-			return runCommand(
+			return RunCommand(
 				localDir,
 				strings.Join(commands2, " && "),
 				nil,
-				nil,
+				WriteToStderr,
 			)
 		}
 		if verbosity == 0 {
@@ -179,11 +136,11 @@ func syncFiles(sshCmd string) {
 			success = success && stopwatch(
 				description,
 				func() bool {
-					return runCommand(
+					return RunCommand(
 						localDir,
 						command,
 						nil,
-						nil,
+						WriteToStderr,
 					)
 				},
 			)
@@ -263,9 +220,9 @@ func parseArguments() {
 	flag.Parse()
 
 	if flag.NArg() != 3 {
-		writeToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
+		WriteToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
 		flag.PrintDefaults()
-		writeToStderr(
+		WriteToStderr(
 			"Required parameters:\n" +
 				"  SOURCE - local directory (absolute path)\n" +
 				"  HOST (IP or HOST or USER@HOST)\n" +
@@ -301,11 +258,11 @@ func parseArguments() {
 
 func masterConnection(sshCmd string) {
 	closeMaster := func() {
-		runCommand(
+		RunCommand(
 			localDir,
 			fmt.Sprintf("%s -O exit %s 2>/dev/null", sshCmd, remoteHost),
 			nil,
-			nil,
+			WriteToStderr,
 		)
 	}
 
@@ -322,7 +279,7 @@ func masterConnection(sshCmd string) {
 	closeMaster()
 	for {
 		fmt.Print("Establishing SSH Master connection... ")
-		runCommand(
+		RunCommand(
 			localDir,
 			fmt.Sprintf(
 				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
@@ -331,7 +288,7 @@ func masterConnection(sshCmd string) {
 				remoteHost,
 			),
 			func(string) { waitingMaster.DoneAll() },
-			nil,
+			WriteToStderr,
 		)
 		closeMaster()
 		waitingMaster.Add(1)
