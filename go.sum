@@ -1,3 +1,9 @@
+github.com/0leksandr/my.go v1.0.0 h1:/dQXoHP3ts4+Qow8qjYBByZVf2i+Y9iEcxSHN6qwxSw=
+github.com/0leksandr/my.go v1.0.0/go.mod h1:AIoYwuvRZTDxm2afkGkLp7CYXMG3wfT1+s5LjrmKUeY=
+github.com/0leksandr/my.go v1.0.1 h1:XR+q3iLLM93wyvPCDUYMejuvZaCxi/yzjfMkNIDogek=
+github.com/0leksandr/my.go v1.0.1/go.mod h1:AIoYwuvRZTDxm2afkGkLp7CYXMG3wfT1+s5LjrmKUeY=
+github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/fsnotify/fsnotify v1.4.9 h1:hsms1Qyu0jgnwNXIxa+/V/PDsU6CfLf6CNO8H7IWoS4=
 github.com/fsnotify/fsnotify v1.4.9/go.mod h1:znqG4EE+3YCdAaPaxE2ZRY/06pZUdp0tY4IgpuI1SZQ=
 golang.org/x/sys v0.0.0-20191005200804-aed5e4c7ecf9 h1:L2auWcuQIvxz9xSEqzESnV/QN/gNRXNApHi3fYwl2w0=

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/0leksandr/my.go"
 	"github.com/fsnotify/fsnotify"
 	"io"
 	"io/ioutil"
@@ -18,6 +19,11 @@ import (
 	"syscall"
 	"time"
 )
+
+var Must = my.Must
+var RunCommand = my.RunCommand
+var PanicIf = my.PanicIf
+var WriteToStderr = my.WriteToStderr
 
 var files []string
 
@@ -69,7 +75,7 @@ func newSSHClient(identityFile *string) *sshClient {
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
 	PanicIf(err)
 	controlPath := controlPathFile.Name()
-	PanicIf(os.Remove(controlPath))
+	Must(os.Remove(controlPath))
 
 	sshCmd := fmt.Sprintf(
 		"ssh -o ControlMaster=auto -o ControlPath=%s -o ConnectTimeout=%d -o ConnectionAttempts=1",
@@ -119,11 +125,14 @@ func (client *sshClient) Close() error {
 	return nil
 }
 func (client *sshClient) runCommand(command string, onStdout func(string)) bool {
-	return runCommand(
+	return RunCommand(
 		client.localDir,
 		command,
-		onStdout,
-		nil,
+		func(out string) {
+			fmt.Println(out)
+			onStdout(out)
+		},
+		WriteToStderr,
 	)
 }
 func (client *sshClient) Upload(filenames []string) bool {
@@ -185,14 +194,6 @@ func syncFiles(client RemoteClient) {
 		}
 	}
 
-	operations := make([]func() bool, 0)
-	if len(existing) > 0 {
-		operations = append(operations, func() bool { return client.Upload(existing) })
-	}
-	if len(deleted) > 0 {
-		operations = append(operations, func() bool { return client.Delete(deleted) })
-	}
-
 	result := true
 	if verbosity == 0 {
 		if len(existing) > 0 { result = result && client.Upload(existing) }
@@ -243,9 +244,9 @@ func syncFiles(client RemoteClient) {
 func watchDirRecursive(path string, processor func(fsnotify.Event)) {
 	watcher, err := fsnotify.NewWatcher()
 	PanicIf(err)
-	defer func() { PanicIf(watcher.Close()) }()
+	defer func() { Must(watcher.Close()) }()
 
-	PanicIf(filepath.Walk(
+	Must(filepath.Walk(
 		path,
 		func(path string, fi os.FileInfo, err error) error {
 			PanicIf(err)
