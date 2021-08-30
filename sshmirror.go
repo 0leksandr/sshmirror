@@ -316,7 +316,7 @@ func parseArguments() {
 
 	connTimeout = *connTimeoutFlag
 	verbosity   = *verbosityFlag
-	if exclude != nil {
+	if *exclude != "" {
 		var err error
 		ignored, err = regexp.Compile(*exclude)
 		PanicIf(err)
