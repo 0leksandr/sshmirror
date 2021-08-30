@@ -71,7 +71,7 @@ type sshClient struct {
 	sshCmd      string
 	controlPath string
 }
-func newSSHClient(identityFile *string) *sshClient {
+func (sshClient) New(identityFile *string) *sshClient {
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
 	PanicIf(err)
 	controlPath := controlPathFile.Name()
@@ -97,43 +97,10 @@ func newSSHClient(identityFile *string) *sshClient {
 
 	return client
 }
-func (client *sshClient) masterConnection() {
-	waitingMaster.Add(1)
-	client.closeMaster()
-	for {
-		fmt.Print("Establishing SSH Master connection... ")
-		client.runCommand(
-			fmt.Sprintf(
-				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
-				client.sshCmd,
-				client.connTimeout,
-				client.remoteHost,
-			),
-			func(string) { waitingMaster.DoneAll() },
-		)
-		client.closeMaster()
-		waitingMaster.Add(1)
-		time.Sleep(time.Duration(client.connTimeout) * time.Second)
-	}
-}
-func (client *sshClient) closeMaster() {
-	client.runCommand(fmt.Sprintf("%s -O exit %s 2>/dev/null", client.sshCmd, client.remoteHost), nil)
-}
 func (client *sshClient) Close() error {
 	client.closeMaster()
 	_ = os.Remove(client.controlPath)
 	return nil
-}
-func (client *sshClient) runCommand(command string, onStdout func(string)) bool {
-	return RunCommand(
-		client.localDir,
-		command,
-		func(out string) {
-			fmt.Println(out)
-			onStdout(out)
-		},
-		WriteToStderr,
-	)
 }
 func (client *sshClient) Upload(filenames []string) bool {
 	return client.runCommand(
@@ -157,6 +124,39 @@ func (client *sshClient) Delete(filenames []string) bool {
 			strings.Join(filenames, " "),
 		),
 		nil,
+	)
+}
+func (client *sshClient) masterConnection() {
+	waitingMaster.Add(1)
+	client.closeMaster()
+	for {
+		fmt.Print("Establishing SSH Master connection... ")
+		client.runCommand(
+			fmt.Sprintf(
+				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
+				client.sshCmd,
+				client.connTimeout,
+				client.remoteHost,
+			),
+			func(string) { waitingMaster.DoneAll() },
+		)
+		client.closeMaster()
+		waitingMaster.Add(1)
+		time.Sleep(time.Duration(client.connTimeout) * time.Second)
+	}
+}
+func (client *sshClient) closeMaster() {
+	client.runCommand(fmt.Sprintf("%s -O exit %s 2>/dev/null", client.sshCmd, client.remoteHost), nil)
+}
+func (client *sshClient) runCommand(command string, onStdout func(string)) bool {
+	return RunCommand(
+		client.localDir,
+		command,
+		func(out string) {
+			fmt.Println(out)
+			onStdout(out)
+		},
+		WriteToStderr,
 	)
 }
 
@@ -342,7 +342,7 @@ func parseArguments() {
 func main() {
 	parseArguments()
 
-	client := newSSHClient(identityFile)
+	client := sshClient{}.New(identityFile)
 
 	exit := make(chan os.Signal)
 	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
