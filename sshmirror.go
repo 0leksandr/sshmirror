@@ -21,8 +21,8 @@ import (
 )
 
 var Must = my.Must
-var RunCommand = my.RunCommand
 var PanicIf = my.PanicIf
+var RunCommand = my.RunCommand
 var WriteToStderr = my.WriteToStderr
 
 var files []string
@@ -246,9 +246,23 @@ func watchDirRecursive(path string, processor func(fsnotify.Event)) {
 	PanicIf(err)
 	defer func() { Must(watcher.Close()) }()
 
+	isIgnored := func(path string) bool {
+		if ignored == nil { return false }
+		if path[:len(localDir)] != localDir {
+			panic(fmt.Sprintf("Unexpected local path: %s", path))
+		}
+		path = path[len(localDir):]
+		if path != "" {
+			if path[0] != '/' { panic(fmt.Sprintf("Unexpected local path: %s", path)) }
+			path = path[1:]
+		}
+		return ignored.MatchString(path)
+	}
+
 	Must(filepath.Walk(
 		path,
 		func(path string, fi os.FileInfo, err error) error {
+			if isIgnored(path) { return nil }
 			PanicIf(err)
 			if fi.Mode().IsDir() { return watcher.Add(path) }
 			return nil
