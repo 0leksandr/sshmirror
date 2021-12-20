@@ -27,6 +27,257 @@ var PanicIf = my.PanicIf
 var RunCommand = my.RunCommand
 var WriteToStderr = my.WriteToStderr
 
+var files []string
+var events []fsnotify.Event
+
+type Modification interface {
+	add(queue *ModificationsQueue) error
+}
+type Created struct {
+	filename string
+}
+type Updated struct {
+	filename string
+}
+type Deleted struct {
+	filename string
+}
+type Moved struct {
+	from string
+	to   string
+}
+func (created Created) add(queue *ModificationsQueue) error {
+	for _, previouslyCreated := range queue.created {
+		if previouslyCreated.filename == created.filename {
+			return errors.New("created, then created")
+		}
+	}
+	for _, updated := range queue.updated {
+		if updated.filename == created.filename {
+			return errors.New("updated, then created")
+		}
+	}
+	for _, moved := range queue.moved {
+		if moved.to == created.filename {
+			return errors.New("moved to, then created")
+		}
+	}
+	for i, deleted := range queue.deleted {
+		if deleted.filename == created.filename {
+			queue.removeDeleted(i)
+			if err := queue.Add(Updated{filename: created.filename}); err != nil { return err }
+			return nil
+		}
+	}
+	queue.created = append(queue.created, created)
+	return nil
+}
+func (updated Updated) add(queue *ModificationsQueue) error {
+	for _, created := range queue.created {
+		if created.filename == updated.filename {
+			return nil
+		}
+	}
+	for _, previouslyUpdated := range queue.updated {
+		if previouslyUpdated.filename == updated.filename {
+			return nil
+		}
+	}
+	for i, moved := range queue.moved {
+		if moved.from == updated.filename {
+			return errors.New("moved from, then updated")
+		}
+		if moved.to == updated.filename {
+			queue.removeMoved(i)
+			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
+			if err := queue.Add(Created{filename: moved.to}); err != nil { return err }
+			return nil
+		}
+	}
+	for _, deleted := range queue.deleted {
+		if deleted.filename == updated.filename {
+			return errors.New("deleted, then updated")
+		}
+	}
+	queue.updated = append(queue.updated, updated)
+	return nil
+}
+func (deleted Deleted) add(queue *ModificationsQueue) error {
+	for i, created := range queue.created {
+		if created.filename == deleted.filename {
+			queue.removeCreated(i)
+			return nil
+		}
+	}
+	for i, updated := range queue.updated {
+		if updated.filename == deleted.filename {
+			queue.removeUpdated(i)
+		}
+	}
+	for i, moved := range queue.moved {
+		if moved.from == deleted.filename {
+			return errors.New("moved from, then deleted")
+		}
+		if moved.to == deleted.filename {
+			queue.removeMoved(i)
+			deleted.filename = moved.from
+		}
+	}
+	for _, previouslyDeleted := range queue.deleted {
+		if previouslyDeleted.filename == deleted.filename {
+			return errors.New("deleted, then deleted")
+		}
+	}
+	queue.deleted = append(queue.deleted, deleted)
+	return nil
+}
+func (moved Moved) add(queue *ModificationsQueue) error {
+	for i, created := range queue.created {
+		if created.filename == moved.from {
+			queue.created[i].filename = moved.to
+			return nil
+		}
+		if created.filename == moved.to {
+			return errors.New("created, then moved to")
+		}
+	}
+	for _, updated := range queue.updated {
+		if updated.filename == moved.from {
+			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
+			if err := queue.Add(Updated{filename: moved.to}); err != nil { return err }
+			return nil
+		}
+		if updated.filename == moved.to {
+			return errors.New("updated, then moved to")
+		}
+	}
+	for _, deleted := range queue.deleted {
+		if deleted.filename == moved.from {
+			return errors.New("deleted, then moved from")
+		}
+	}
+	for i, previouslyMoved := range queue.moved {
+		if previouslyMoved.from == moved.from {
+			return errors.New("moved from, then moved from")
+		}
+		if previouslyMoved.from == moved.to {
+			// TODO: think about
+		}
+		if previouslyMoved.to == moved.from {
+			queue.moved[i].to = moved.to
+			return nil
+		}
+		if previouslyMoved.to == moved.to {
+			// TODO: override?
+		}
+	}
+	queue.moved = append(queue.moved, moved)
+	return nil
+}
+
+func (queue *ModificationsQueue) Add(modification Modification) error {
+	return modification.add(queue)
+}
+func (queue *ModificationsQueue) Apply(client RemoteClient) {
+	if len(queue.deleted) > 0 {
+		deletedFilenames := make([]string, 0, len(queue.deleted))
+		for _, deleted := range queue.deleted { deletedFilenames = append(deletedFilenames, deleted.filename) }
+		client.Delete(deletedFilenames)
+	}
+
+	for _, moved := range queue.moved {
+		client.Move(moved.from, moved.to)
+	}
+
+	if len(queue.created) > 0 || len(queue.updated) > 0 {
+		updatedFilenames := make([]string, 0, len(queue.created) + len(queue.updated))
+		for _, created := range queue.created { updatedFilenames = append(updatedFilenames, created.filename) }
+		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
+		client.Upload(updatedFilenames)
+	}
+}
+func (queue *ModificationsQueue) Check() error {
+	filenames := make([]string, 0, len(queue.created) + len(queue.updated) + len(queue.deleted) + len(queue.moved) * 2)
+	for _, created := range queue.created { filenames = append(filenames, created.filename) }
+	for _, updated := range queue.updated { filenames = append(filenames, updated.filename) }
+	for _, deleted := range queue.deleted { filenames = append(filenames, deleted.filename) }
+	for _, moved := range queue.moved {
+		filenames = append(filenames, moved.from)
+		filenames = append(filenames, moved.to)
+	}
+	uniqueFilenames := make(map[string]bool)
+	for _, filename := range filenames { uniqueFilenames[filename] = true }
+
+	if len(filenames) != len(uniqueFilenames) {
+		my.Dump(queue)
+		return errors.New("modifications corrupted")
+	}
+	return nil
+}
+func (queue *ModificationsQueue) removeCreated(i int) {
+	last := len(queue.created) - 1
+	if i != last { queue.created[i] = queue.created[last] }
+	queue.created = queue.created[:last]
+}
+func (queue *ModificationsQueue) removeUpdated(i int) {
+	last := len(queue.updated) - 1
+	if i != last { queue.updated[i] = queue.updated[last] }
+	queue.updated = queue.updated[:last]
+}
+func (queue *ModificationsQueue) removeDeleted(i int) {
+	last := len(queue.deleted) - 1
+	if i != last { queue.deleted[i] = queue.deleted[last] }
+	queue.deleted = queue.deleted[:last]
+}
+func (queue *ModificationsQueue) removeMoved(i int) {
+	last := len(queue.moved) - 1
+	if i != last { queue.moved[i] = queue.moved[last] }
+	queue.moved = queue.moved[:last]
+}
+
+type ModificationsQueue struct {
+	created []Created
+	updated []Updated
+	deleted []Deleted
+	moved   []Moved
+}
+
+func readModifications() (*ModificationsQueue, error) {
+	defer func() { events = make([]fsnotify.Event, 0) }()
+	queue := ModificationsQueue{}
+	for i := 0; i < len(events); i++ {
+		event := events[i]
+		switch event.Op {
+			case fsnotify.Create:
+				err := queue.Add(Created{filename: event.Name})
+				if err != nil { return nil, err }
+			case fsnotify.Write:
+				err := queue.Add(Updated{filename: event.Name})
+				if err != nil { return nil, err }
+			case fsnotify.Remove:
+				err := queue.Add(Deleted{filename: event.Name})
+				if err != nil { return nil, err }
+			case fsnotify.Rename:
+				if i < len(events) - 1 {
+					nextEvent := events[i + 1]
+					if nextEvent.Op == fsnotify.Create { // TODO: check contents (checksums, modification times)
+						err := queue.Add(Moved{
+							from: event.Name,
+							to:   nextEvent.Name,
+						})
+						if err != nil { return nil, err }
+						i++
+						break
+					}
+				}
+				err := queue.Add(Deleted{filename: event.Name})
+				if err != nil { return nil, err }
+		}
+	}
+	if err := queue.Check(); err != nil { return nil, err }
+	return &queue, nil
+}
+
 type CountableWaitGroup struct {
 	wg    sync.WaitGroup
 	count int
@@ -58,13 +309,14 @@ type Config struct {
 }
 
 type RemoteClient interface {
-	io.Closer
-	Upload(filenames []string) bool
+	Upload(filenames []string) bool // TODO: return error
 	Delete(filenames []string) bool
+	Move(from string, to string) bool
 }
 
 type sshClient struct {
 	RemoteClient
+	io.Closer
 	config        Config
 	sshCmd        string
 	controlPath   string
@@ -120,16 +372,17 @@ func (client *sshClient) Upload(filenames []string) bool {
 	)
 }
 func (client *sshClient) Delete(filenames []string) bool {
-	return client.runCommand(
-		fmt.Sprintf(
-			"%s %s 'cd %s && rm -rf %s'",
-			client.sshCmd,
-			client.config.remoteHost,
-			client.config.remoteDir,
-			strings.Join(filenames, " "),
-		),
-		nil,
-	)
+	return client.runRemoteCommand(fmt.Sprintf(
+		"rm -rf %s", // TODO: check flags
+		strings.Join(filenames, " "),
+	))
+}
+func (client *sshClient) Move(from string, to string) bool {
+	return client.runRemoteCommand(fmt.Sprintf(
+		"mv %s %s",
+		from,
+		to,
+	))
 }
 func (client *sshClient) keepMasterConnection() {
 	client.waitingMaster.Add(1)
@@ -170,7 +423,29 @@ func (client *sshClient) runCommand(command string, onStdout func(string)) bool 
 		WriteToStderr,
 	)
 }
+func (client *sshClient) runRemoteCommand(command string) bool {
+	return client.runCommand(
+		fmt.Sprintf(
+			"%s %s 'cd %s && %s'",
+			client.sshCmd,
+			client.config.remoteHost,
+			client.config.remoteDir,
+			command, // TODO: escape
+		),
+		nil,
+	)
+}
 
+func syncModifications(client RemoteClient) {
+	if queue, err := readModifications(); err == nil {
+		queue.Apply(client)
+		files = make([]string, 0)
+	} else {
+		my.WriteToStderr(err.Error())
+		my.WriteToStderr("Applying fallback algorithm")
+		syncFiles(client)
+	}
+}
 func syncFiles(client RemoteClient, localDir string, files []string) {
 	filesUnique := make(map[string]interface{})
 	for _, file := range files { filesUnique[file] = nil }
@@ -400,7 +675,8 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 		copy(filesToSync, files)
 		files = []string{}
 
-		syncFiles(client, config.localDir, filesToSync)
+		//syncFiles(client, config.localDir, filesToSync)
+		syncModifications(client)
 
 		queueSize -= len(filesToSync)
 		if queueSize == 0 { client.onReady() }
@@ -414,6 +690,8 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 			filename := event.Name[len(config.localDir)+1:]
 			if ignored != nil && ignored.MatchString(filename) { return }
 			queueSize += 1
+
+			events = append(events, event)
 			files = append(files, filename)
 
 			if cancelFirst == nil { cancelFirst = cancellableTimer(5 * time.Second, doSync) }
