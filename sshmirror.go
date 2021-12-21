@@ -32,7 +32,7 @@ var syncing sync.WaitGroup
 var waitingMaster CountableWaitGroup
 var syncingQueued bool
 type CountableWaitGroup struct {
-	wg sync.WaitGroup
+	wg    sync.WaitGroup
 	count int
 }
 func (wg *CountableWaitGroup) Add(c int) {
