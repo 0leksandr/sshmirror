@@ -1,6 +1,0 @@
-{
-  "IdentityFile": "/home/nezhraba/_/PDFfiller/shared/ssh/dpf_ec2_user_rsa",
-  "RemoteAddress": "ec2-user@10.92.102.24",
-  "RemotePath": "/mnt/app/pmnt-dev-orchestr-api-labs/app_files/cloud-billing-orchestrator-api/sandbox",
-  "TimeoutSeconds": 5
-}

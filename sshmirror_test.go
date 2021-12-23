@@ -17,8 +17,9 @@ import (
 
 // TODO: test creating/removing/moving directories
 
-var debug = false
-var simpleFilenames = false
+const debug = false
+const simpleFilenames = false
+const integrationTest = false
 var delaysBasic = []float32{
 	0,
 	0.1,
@@ -26,7 +27,8 @@ var delaysBasic = []float32{
 var delaysMaster = []float32{
 	0,
 	0.1,
-	0.5,
+	0.4,
+	0.6,
 	1,
 }
 
@@ -122,7 +124,7 @@ func generateFilename(inTarget bool) TestFilename {
 		return TestFilename(fmt.Sprintf("%s/file-%d", dir, fileIndex))
 	}
 
-	symbols := "abc,.;'[]<>?:\"{}123`~!@#$%^&*()-=_+ абв"
+	symbols := "abc,.;'[]\\<>?:\"{}|123`~!@#$%^&*()-=_+ абв"
 	symbols = "abcdefghijklmnop" // TODO: remove
 	// TODO: guarantee uniqueness
 	nrSymbols := rand.Intn(150) + 1
@@ -345,11 +347,6 @@ type TestConfig struct {
 }
 
 func TestIntegration(t *testing.T) {
-	if false {
-		debug = !debug
-		simpleFilenames = !simpleFilenames
-	}
-
 	currentDir, err := os.Getwd()
 	PanicIf(err)
 	sandbox := fmt.Sprintf("%s/sandbox", currentDir)
@@ -361,17 +358,30 @@ func TestIntegration(t *testing.T) {
 	testConfig := TestConfig{}
 	Must(json.NewDecoder(configFile).Decode(&testConfig))
 
-	sshmirror := exec.Command(
-		"./sshmirror",
-		"-i="+testConfig.IdentityFile,
-		"-v=1",
-		target,
-		testConfig.RemoteAddress,
-		testConfig.RemotePath,
-	)
-	sshmirror.Dir = currentDir
-	defer func() { Must(sshmirror.Process.Kill()) }()
-	go func() { Must(sshmirror.Run()) }()
+	var syncing CountableWaitGroup
+	if integrationTest {
+		sshmirror := exec.Command(
+			"./sshmirror",
+			"-i="+testConfig.IdentityFile,
+			"-v=1",
+			target,
+			testConfig.RemoteAddress,
+			testConfig.RemotePath,
+		)
+		sshmirror.Dir = currentDir
+		defer func() { Must(sshmirror.Process.Kill()) }()
+		go func() { Must(sshmirror.Run()) }()
+	} else {
+		client := launchClient(Config{
+			localDir:     target,
+			remoteHost:   testConfig.RemoteAddress,
+			remoteDir:    testConfig.RemotePath,
+			identityFile: testConfig.IdentityFile,
+			connTimeout:  testConfig.TimeoutSeconds,
+		})
+		client.onReady = func() { syncing.DoneAll() }
+		defer func() { Must(client.Close()) }()
+	}
 
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-test-")
 	PanicIf(err)
@@ -397,7 +407,7 @@ func TestIntegration(t *testing.T) {
 	executeRemote := func(cmd string) []string {
 		result := make([]string, 0)
 		my.RunCommand(
-			localDir,
+			"",
 			fmt.Sprintf(
 				"%s %s -t \"cd %s && (%s)\"",
 				sshCmd,
@@ -416,8 +426,8 @@ func TestIntegration(t *testing.T) {
 	check := func() {
 		hashCmd := `
 (
- find . -type f -print0  | sort -z | xargs -0 sha1sum;
- find . \( -type f -o -type d \) -print0 | sort -z | xargs -0 stat -c '%n %a'
+  find . -type f -print0  | sort -z | xargs -0 sha1sum;
+  find . \( -type f -o -type d \) -print0 | sort -z | xargs -0 stat -c '%n %a'
 ) | sha1sum
 `
 		var localHash string
@@ -483,6 +493,14 @@ func TestIntegration(t *testing.T) {
 	})()
 	scenarioIdx := 0
 
+	awaitSync := func() {
+		if integrationTest {
+			time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second)
+		} else {
+			syncing.Wait()
+		}
+	}
+
 	for _, chain := range chains {
 		if debug { my.Dump2(chain) }
 		for _, scenario := range chain.scenarios() {
@@ -495,6 +513,8 @@ func TestIntegration(t *testing.T) {
 			for _, command := range scenario.before {
 				if debug { my.Dump(command) }
 
+				if integrationTest {} else { syncing.Add(1) }
+
 				if command != "" {
 					my.RunCommand(
 						sandbox,
@@ -504,9 +524,12 @@ func TestIntegration(t *testing.T) {
 					)
 				}
 			}
-			time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second)
+			awaitSync()
+
 			for _, command := range scenario.after {
 				if debug { my.Dump(command) }
+
+				if integrationTest {} else { syncing.Add(1) }
 
 				my.RunCommand(
 					sandbox,
@@ -515,7 +538,7 @@ func TestIntegration(t *testing.T) {
 					func(err string) { panic(err) },
 				)
 			}
-			time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second)
+			awaitSync()
 			check()
 			reset()
 		}
