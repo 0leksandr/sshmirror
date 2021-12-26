@@ -70,8 +70,8 @@ type sshClient struct {
 	controlPath   string
 	waitingMaster *CountableWaitGroup
 	done          bool // TODO: rename
-	onReady func() // just for test
-	onExit  func() // just for test
+	stopWatching  func()
+	onReady       func() // just for test
 }
 func (sshClient) New(config Config) *sshClient {
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
@@ -93,6 +93,7 @@ func (sshClient) New(config Config) *sshClient {
 		sshCmd:        sshCmd,
 		controlPath:   controlPath,
 		waitingMaster: &waitingMaster,
+		onReady:       func() {},
 	}
 
 	go client.keepMasterConnection()
@@ -101,7 +102,7 @@ func (sshClient) New(config Config) *sshClient {
 }
 func (client *sshClient) Close() error {
 	client.done = true
-	client.onExit()
+	client.stopWatching()
 	client.closeMaster()
 	_ = os.Remove(client.controlPath)
 	return nil
@@ -391,7 +392,7 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 		if queueSize == 0 { client.onReady() }
 	}
 
-	client.onExit = watchDirRecursive(
+	client.stopWatching = watchDirRecursive(
 		config.localDir,
 		func(event fsnotify.Event) {
 			if event.Op == fsnotify.Chmod { return }

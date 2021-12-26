@@ -498,7 +498,7 @@ func TestIntegration(t *testing.T) {
 					Must(command.Process.Kill())
 					SUTsDone.Done()
 				}()
-				go func() { Must(command.Run()) }()
+				Must(command.Start())
 			} else {
 				client := launchClient(Config{
 					localDir:     localTarget,
