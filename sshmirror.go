@@ -235,21 +235,21 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 	}
 }
 
-func watchDirRecursive(path string, processor func(fsnotify.Event)) context.CancelFunc {
+func watchDirRecursive(path string, ignored *regexp.Regexp, processor func(fsnotify.Event)) context.CancelFunc {
 	watcher, err := fsnotify.NewWatcher()
 	PanicIf(err)
 
-	isIgnored := func(path string) bool {
+	isIgnored := func(path2 string) bool {
 		if ignored == nil { return false }
-		if path[:len(localDir)] != localDir {
-			panic(fmt.Sprintf("Unexpected local path: %s", path))
+		if path2[:len(path)] != path {
+			panic(fmt.Sprintf("Unexpected local path: %s", path2))
 		}
-		path = path[len(localDir):]
-		if path != "" {
-			if path[0] != '/' { panic(fmt.Sprintf("Unexpected local path: %s", path)) }
-			path = path[1:]
+		path2 = path2[len(path):]
+		if path2 != "" {
+			if path2[0] != '/' { panic(fmt.Sprintf("Unexpected local path: %s", path2)) }
+			path2 = path2[1:]
 		}
-		return ignored.MatchString(path)
+		return ignored.MatchString(path2)
 	}
 
 	Must(filepath.Walk(
@@ -408,6 +408,7 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 
 	client.stopWatching = watchDirRecursive(
 		config.localDir,
+		ignored,
 		func(event fsnotify.Event) {
 			if event.Op == fsnotify.Chmod { return }
 			filename := event.Name[len(config.localDir)+1:]
