@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 )
 
 // TODO: test creating/removing/moving directories
+// TODO: test symlinks
 
 const debug = false
 const simpleFilenames = false
@@ -66,6 +68,12 @@ type TestScenario struct {
 	before []string
 	after  []string
 }
+func (scenario TestScenario) applyTarget(targetId int) {
+	reg := regexp.MustCompile("\\[target]")
+	target := fmt.Sprintf("target%d", targetId)
+	for i, command := range scenario.before { scenario.before[i] = reg.ReplaceAllString(command, target) }
+	for i, command := range scenario.after { scenario.after[i] = reg.ReplaceAllString(command, target) }
+}
 
 type TestModificationsList []TestModificationInterface
 func (modifications TestModificationsList) commandsVariants() [][]string {
@@ -87,6 +95,9 @@ func (modifications TestModificationsList) commandsVariants() [][]string {
 		modificationVariants := modification.commandVariants()
 		newVariants := make([][]string, 0, len(variants) * len(modificationVariants))
 		for _, variant := range variants {
+			//variantCopy := make([]string, len(variant))
+			//copy(variantCopy, variant)
+
 			for _, command := range modificationVariants {
 				newVariants = append(newVariants, append(variant, command))
 			}
@@ -106,6 +117,11 @@ func (chain TestModificationChain) scenarios() []TestScenario {
 	scenarios := make([]TestScenario, 0, len(variantsBefore) * len(variantsAfter))
 	for _, before := range variantsBefore {
 		for _, after := range variantsAfter {
+			//copyBefore := make([]string, len(before))
+			//copy(copyBefore, before)
+			//copyAfter := make([]string, len(after))
+			//copy(copyAfter, after)
+
 			scenarios = append(scenarios, TestScenario{
 				before: before,
 				after:  after,
@@ -124,6 +140,7 @@ func generateFilename(inTarget bool) TestFilename {
 		return TestFilename(fmt.Sprintf("%s/file-%d", dir, fileIndex))
 	}
 
+	// TODO: ensure that all symbols are used
 	symbols := "abc,.;'[]\\<>?:\"{}|123`~!@#$%^&*()-=_+ абв"
 	symbols = "abcdefghijklmnop" // TODO: remove
 	// TODO: guarantee uniqueness
@@ -132,7 +149,6 @@ func generateFilename(inTarget bool) TestFilename {
 	if inTarget { dir += "target/" }
 	var filename string
 	for i := 0; i < nrSymbols; i++ {
-		// TODO: check
 		filename += string(symbols[rand.Intn(len(symbols))])
 	}
 	if my.InArray(
@@ -322,6 +338,12 @@ func modificationChains() []TestModificationChain {
 		masterChain.before = append(masterChain.before, simplify(chain.before)...)
 		masterChain.after = append(masterChain.after, simplify(chain.after)...)
 	}
+	for _, delaySeconds := range delaysMaster {
+		chains = append(chains, TestModificationChain{
+			before: masterChain.before,
+			after:  mergeDelays(masterChain.after, delaySeconds),
+		})
+	}
 	for _, delaySeconds := range delaysBasic {
 		for _, chain := range basicChains {
 			chains = append(chains, TestModificationChain{
@@ -329,12 +351,6 @@ func modificationChains() []TestModificationChain {
 				after:  mergeDelays(chain.after, delaySeconds),
 			})
 		}
-	}
-	for _, delaySeconds := range delaysMaster {
-		chains = append(chains, TestModificationChain{
-			before: masterChain.before,
-			after:  mergeDelays(masterChain.after, delaySeconds),
-		})
 	}
 	return chains
 }
@@ -344,44 +360,28 @@ type TestConfig struct {
 	RemoteAddress  string
 	RemotePath     string
 	TimeoutSeconds int
+	NrThreads      int
+}
+func (config TestConfig) isSet() bool {
+	value := reflect.ValueOf(config)
+	for i := 0; i < value.NumField(); i++ {
+		field := value.Field(i)
+		if reflect.New(field.Type()).Elem().Interface() == field.Interface() { return false }
+	}
+	return true
 }
 
 func TestIntegration(t *testing.T) {
 	currentDir, err := os.Getwd()
 	PanicIf(err)
 	sandbox := fmt.Sprintf("%s/sandbox", currentDir)
-	target := fmt.Sprintf("%s/target", sandbox)
 
 	configFile, err := os.Open(fmt.Sprintf("%s/test-config.json", currentDir))
 	PanicIf(err)
 	defer func() { Must(configFile.Close()) }()
 	testConfig := TestConfig{}
 	Must(json.NewDecoder(configFile).Decode(&testConfig))
-
-	var syncing CountableWaitGroup
-	if integrationTest {
-		sshmirror := exec.Command(
-			"./sshmirror",
-			"-i="+testConfig.IdentityFile,
-			"-v=1",
-			target,
-			testConfig.RemoteAddress,
-			testConfig.RemotePath,
-		)
-		sshmirror.Dir = currentDir
-		defer func() { Must(sshmirror.Process.Kill()) }()
-		go func() { Must(sshmirror.Run()) }()
-	} else {
-		client := launchClient(Config{
-			localDir:     target,
-			remoteHost:   testConfig.RemoteAddress,
-			remoteDir:    testConfig.RemotePath,
-			identityFile: testConfig.IdentityFile,
-			connTimeout:  testConfig.TimeoutSeconds,
-		})
-		client.onReady = func() { syncing.DoneAll() }
-		defer func() { Must(client.Close()) }()
-	}
+	if !testConfig.isSet() { panic("config is not set") }
 
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-test-")
 	PanicIf(err)
@@ -404,7 +404,7 @@ func TestIntegration(t *testing.T) {
 	}()
 	masterConnectionReady.Wait()
 
-	executeRemote := func(cmd string) []string {
+	executeRemote := func(remotePath string, cmd string) []string {
 		result := make([]string, 0)
 		my.RunCommand(
 			"",
@@ -412,7 +412,7 @@ func TestIntegration(t *testing.T) {
 				"%s %s -t \"cd %s && (%s)\"",
 				sshCmd,
 				testConfig.RemoteAddress,
-				testConfig.RemotePath,
+				remotePath,
 				cmd,
 			),
 			func(out string) {
@@ -423,124 +423,208 @@ func TestIntegration(t *testing.T) {
 		return result
 	}
 
-	check := func() {
-		hashCmd := `
+	var SUTsDone sync.WaitGroup
+
+	reset := func(remotePath string, localPath string, full bool) {
+		var resetCmd string
+		if full {
+			//resetCmd = "find . -not -path . -not -name '.gitignore' -exec rm -r {} +"
+			resetCmd = "find . -type f -not -name '.gitignore' -delete && find . -type d -delete"
+		} else {
+			//resetCmd = "find . -not -name '.gitignore' -not -name 'target' -delete"
+			resetCmd = "find . -type f -not -name '.gitignore' -delete"
+		}
+		my.RunCommand(
+			localPath,
+			resetCmd,
+			nil,
+			func(err string) { panic(err) },
+		)
+		executeRemote(remotePath, resetCmd)
+	}
+	reset(testConfig.RemotePath, sandbox, true)
+	var cleanUp sync.WaitGroup
+	cleanUp.Add(1)
+	defer func() {
+		SUTsDone.Wait()
+		reset(testConfig.RemotePath, sandbox, true)
+		cleanUp.Done()
+	}()
+
+	chains := modificationChains()
+
+	my.Dump2(time.Now())
+	var nrScenarios int
+	for _, chain := range chains { nrScenarios += len(chain.scenarios()) }
+	my.Dump(nrScenarios)
+
+	scenarios := make(chan TestScenario, nrScenarios)
+	for _, chain := range chains {
+		if debug { my.Dump2(chain) }
+		for _, scenario := range chain.scenarios() {
+			scenarios <- scenario
+		}
+	}
+	close(scenarios)
+
+	var wg sync.WaitGroup
+	wg.Add(testConfig.NrThreads)
+	scenarioIdx := 0
+	for i := 0; i < testConfig.NrThreads; i++ {
+		go func(processId int) {
+			processDir := fmt.Sprintf("process%d", processId)
+			targetDir := fmt.Sprintf("%s/target", processDir)
+			localSandbox := fmt.Sprintf("%s/%s", sandbox, processDir)
+			remoteSandbox := fmt.Sprintf("%s/%s", testConfig.RemotePath, processDir)
+			localTarget := fmt.Sprintf("%s/%s", sandbox, targetDir)
+			remoteTarget := fmt.Sprintf("%s/%s", testConfig.RemotePath, targetDir)
+			mkdir := fmt.Sprintf("mkdir -p %s", targetDir)
+			my.RunCommand(sandbox, mkdir, nil, func(err string) { panic(err) })
+			executeRemote(testConfig.RemotePath, mkdir)
+
+			var syncing CountableWaitGroup
+			SUTsDone.Add(1)
+			if integrationTest {
+				command := exec.Command(
+					"./sshmirror",
+					"-i="+testConfig.IdentityFile,
+					"-v=1",
+					localTarget,
+					testConfig.RemoteAddress,
+					remoteTarget,
+				)
+				command.Dir = currentDir
+				defer func() {
+					Must(command.Process.Kill())
+					SUTsDone.Done()
+				}()
+				go func() { Must(command.Run()) }()
+			} else {
+				client := launchClient(Config{
+					localDir:     localTarget,
+					remoteHost:   testConfig.RemoteAddress,
+					remoteDir:    remoteTarget,
+					identityFile: testConfig.IdentityFile,
+					connTimeout:  testConfig.TimeoutSeconds,
+				})
+				client.onReady = func() { syncing.DoneAll() }
+				defer func() {
+					Must(client.Close())
+					SUTsDone.Done()
+				}()
+			}
+
+			awaitSync := func() {
+				if integrationTest {
+					time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second)
+				} else {
+					syncing.Wait()
+				}
+			}
+
+			for scenario := range scenarios {
+				(func() {
+					my.Dump(scenarioIdx)
+					scenarioIdx++ // MAYBE: atomic
+				})()
+				if debug {
+					my.Dump(processId)
+					my.Dump2(scenario)
+				}
+
+				check := func() {
+					localPath := localTarget
+					remotePath := remoteTarget
+					hashCmd := `
 (
   find . -type f -print0  | sort -z | xargs -0 sha1sum;
   find . \( -type f -o -type d \) -print0 | sort -z | xargs -0 stat -c '%n %a'
 ) | sha1sum
 `
-		var localHash string
-		my.RunCommand(
-			target,
-			hashCmd,
-			func(out string) {
-				localHash = out
-			},
-			func(err string) { panic(err) },
-		)
+					var localHash string
+					for localHash == "" {
+						my.RunCommand(
+							localPath,
+							hashCmd,
+							func(out string) {
+								localHash = out
+							},
+							func(err string) { panic(err) },
+						)
+					}
 
-		remoteHash := executeRemote(hashCmd)
-		if debug {
-			my.Dump(localHash)
-			my.Dump(remoteHash)
-			for _, cmd := range []string{
-				"find . -type f -print0  | sort -z | xargs -0 sha1sum;",
-				"find . \\( -type f -o -type d \\) -print0 | sort -z | xargs -0 stat -c '%n %a'",
-				hashCmd,
-			} {
-				my.Dump(cmd)
-				local := make([]string, 0)
-				my.RunCommand(
-					target,
-					cmd,
-					func(out string) { local = append(local, out) },
-					func(err string) { panic(err) },
-				)
-				my.Dump2(local)
-				remote := executeRemote(cmd)
-				my.Dump2(remote)
-				my.Dump(reflect.DeepEqual(local, remote))
-			}
-		}
-		if !reflect.DeepEqual([]string{localHash}, remoteHash) {
-			t.Error("hashes mismatch", localHash, remoteHash)
-			t.Fail()
-		}
-	}
+					var remoteHash []string
+					for len(remoteHash) == 0 {
+						remoteHash = executeRemote(remotePath, hashCmd)
+					}
 
-	reset := func() {
-		//resetCmd := "ls -1A . |grep -xv '.gitignore' |grep -xv 'target' |xargs -r -- rm"
-		resetCmd := "find . -type f -not -name '.gitignore' -delete"
-		my.RunCommand(
-			sandbox,
-			resetCmd,
-			nil,
-			func(err string) { panic(err) },
-		)
-		executeRemote(resetCmd)
-	}
-	reset()
-	defer reset()
+					if !reflect.DeepEqual([]string{localHash}, remoteHash) {
+						t.Error("hashes mismatch", localHash, remoteHash)
 
-	chains := modificationChains()
-
-	(func() {
-		my.Dump2(time.Now())
-		var nrScenarios int
-		for _, chain := range chains { nrScenarios += len(chain.scenarios()) }
-		my.Dump(nrScenarios)
-	})()
-	scenarioIdx := 0
-
-	awaitSync := func() {
-		if integrationTest {
-			time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second)
-		} else {
-			syncing.Wait()
-		}
-	}
-
-	for _, chain := range chains {
-		if debug { my.Dump2(chain) }
-		for _, scenario := range chain.scenarios() {
-			(func() {
-				my.Dump(scenarioIdx)
-				scenarioIdx++
-			})()
-			if debug { my.Dump2(scenario) }
-
-			for _, command := range scenario.before {
-				if debug { my.Dump(command) }
-
-				if integrationTest {} else { syncing.Add(1) }
-
-				if command != "" {
-					my.RunCommand(
-						sandbox,
-						command,
-						nil,
-						func(err string) { panic(err) },
-					)
+						my.Dump(processId)
+						my.Dump2(scenario)
+						my.Dump(localHash)
+						my.Dump(remoteHash)
+						for _, cmd := range []string{
+							"find . -type f -print0  | sort -z | xargs -0 sha1sum;",
+							"find . \\( -type f -o -type d \\) -print0 | sort -z | xargs -0 stat -c '%n %a'",
+							hashCmd,
+						} {
+							my.Dump(cmd)
+							local := make([]string, 0)
+							my.RunCommand(
+								localPath,
+								cmd,
+								func(out string) { local = append(local, out) },
+								func(err string) { panic(err) },
+							)
+							my.Dump2(local)
+							remote := executeRemote(remotePath, cmd)
+							my.Dump2(remote)
+							my.Dump(reflect.DeepEqual(local, remote))
+						}
+					}
 				}
+
+				scenario.applyTarget(processId)
+
+				for _, command := range scenario.before {
+					if debug { my.Dump(command) }
+
+					if command != "" {
+						if integrationTest {} else { syncing.Add(1) }
+
+						my.RunCommand(
+							localSandbox,
+							command,
+							nil,
+							func(err string) { panic(err) },
+						)
+					}
+				}
+				awaitSync()
+
+				for _, command := range scenario.after {
+					if debug { my.Dump(command) }
+
+					if command != "" {
+						if integrationTest {} else { syncing.Add(1) }
+
+						my.RunCommand(
+							localSandbox,
+							command,
+							nil,
+							func(err string) { panic(err) },
+						)
+					}
+				}
+				awaitSync()
+				check()
+				reset(remoteSandbox, localSandbox, false)
 			}
-			awaitSync()
 
-			for _, command := range scenario.after {
-				if debug { my.Dump(command) }
-
-				if integrationTest {} else { syncing.Add(1) }
-
-				my.RunCommand(
-					sandbox,
-					command,
-					nil,
-					func(err string) { panic(err) },
-				)
-			}
-			awaitSync()
-			check()
-			reset()
-		}
+			wg.Done()
+		}(i + 1)
 	}
+	wg.Wait()
 }

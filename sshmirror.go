@@ -27,8 +27,6 @@ var RunCommand = my.RunCommand
 var PanicIf = my.PanicIf
 var WriteToStderr = my.WriteToStderr
 
-var waitingMaster CountableWaitGroup // TODO: use `sync.Mutex`?
-
 type CountableWaitGroup struct {
 	wg    sync.WaitGroup
 	count int
@@ -67,10 +65,13 @@ type RemoteClient interface {
 
 type sshClient struct {
 	RemoteClient
-	config      Config
-	sshCmd      string
-	controlPath string
-	onReady     func() // just for test
+	config        Config
+	sshCmd        string
+	controlPath   string
+	waitingMaster *CountableWaitGroup
+	done          bool // TODO: rename
+	onReady func() // just for test
+	onExit  func() // just for test
 }
 func (sshClient) New(config Config) *sshClient {
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
@@ -85,17 +86,22 @@ func (sshClient) New(config Config) *sshClient {
 	)
 	if config.identityFile != "" { sshCmd += " -i " + config.identityFile }
 
+	var waitingMaster CountableWaitGroup
+
 	client := &sshClient{
-		config:      config,
-		sshCmd:      sshCmd,
-		controlPath: controlPath,
+		config:        config,
+		sshCmd:        sshCmd,
+		controlPath:   controlPath,
+		waitingMaster: &waitingMaster,
 	}
 
-	go client.masterConnection()
+	go client.keepMasterConnection()
 
 	return client
 }
 func (client *sshClient) Close() error {
+	client.done = true
+	client.onExit()
 	client.closeMaster()
 	_ = os.Remove(client.controlPath)
 	return nil
@@ -124,11 +130,12 @@ func (client *sshClient) Delete(filenames []string) bool {
 		nil,
 	)
 }
-func (client *sshClient) masterConnection() {
-	waitingMaster.Add(1)
+func (client *sshClient) keepMasterConnection() {
+	client.waitingMaster.Add(1)
 	client.closeMaster()
 	for {
 		fmt.Print("Establishing SSH Master connection... ")
+
 		client.runCommand(
 			fmt.Sprintf(
 				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
@@ -136,10 +143,12 @@ func (client *sshClient) masterConnection() {
 				client.config.connTimeout,
 				client.config.remoteHost,
 			),
-			func(string) { waitingMaster.DoneAll() },
+			func(string) { client.waitingMaster.DoneAll() },
 		)
+
 		client.closeMaster()
-		waitingMaster.Add(1)
+		if client.done { break }
+		client.waitingMaster.Add(1)
 		time.Sleep(time.Duration(client.config.connTimeout) * time.Second)
 	}
 }
@@ -225,10 +234,9 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 	}
 }
 
-func watchDirRecursive(path string, processor func(fsnotify.Event)) {
+func watchDirRecursive(path string, processor func(fsnotify.Event)) context.CancelFunc {
 	watcher, err := fsnotify.NewWatcher()
 	PanicIf(err)
-	defer func() { Must(watcher.Close()) }()
 
 	Must(filepath.Walk(
 		path,
@@ -239,11 +247,22 @@ func watchDirRecursive(path string, processor func(fsnotify.Event)) {
 		},
 	))
 
-	for {
-		select {
-			case event := <-watcher.Events: processor(event)
-			case err := <-watcher.Errors: PanicIf(err)
+	stop := make(chan bool)
+
+	go func() {
+		for {
+			select {
+				case event := <-watcher.Events: processor(event)
+				case err := <-watcher.Errors: PanicIf(err)
+				case <-stop: return
+			}
 		}
+	}()
+
+	return func() {
+		stop <- true
+		close(stop)
+		Must(watcher.Close())
 	}
 }
 
@@ -330,7 +349,7 @@ func parseArguments() Config {
 	}
 }
 
-func launchClient(config Config) *sshClient {
+func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 	client := sshClient{}.New(config)
 	var files []string
 	var syncing sync.Mutex
@@ -350,7 +369,7 @@ func launchClient(config Config) *sshClient {
 		syncing.Lock()
 		defer syncing.Unlock()
 
-		waitingMaster.Wait()
+		client.waitingMaster.Wait()
 
 		if cancelFirst != nil {
 			(*cancelFirst)()
@@ -372,7 +391,7 @@ func launchClient(config Config) *sshClient {
 		if queueSize == 0 { client.onReady() }
 	}
 
-	go watchDirRecursive(
+	client.onExit = watchDirRecursive(
 		config.localDir,
 		func(event fsnotify.Event) {
 			if event.Op == fsnotify.Chmod { return }
