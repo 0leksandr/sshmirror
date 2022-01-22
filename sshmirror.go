@@ -281,7 +281,7 @@ func (wg *CountableWaitGroup) Wait() {
 	wg.wg.Wait()
 }
 
-var ignored *regexp.Regexp // TODO: move to `Config`
+var ignored *regexp.Regexp // MAYBE: move to `Config`
 var verbosity int
 
 type Config struct {
@@ -619,7 +619,6 @@ func parseArguments() Config {
 func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 	client := sshClient{}.New(config)
 	var events []fsnotify.Event
-	var files []string // TODO: remove, use `events` instead
 	var syncing sync.Mutex
 	var queueSize int
 	var cancelFirst *context.CancelFunc
@@ -653,15 +652,13 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 
 		if queue, err := readModifications(events, config.localDir); err == nil {
 			events = []fsnotify.Event{}
-			files = []string{}
 			queue.Apply(client)
 		} else {
 			my.WriteToStderr(err.Error())
 			my.WriteToStderr("Applying fallback algorithm")
+			filesToSync := make([]string, 0, len(events))
+			for _, event := range events { filesToSync = append(filesToSync, event.Name) }
 			events = []fsnotify.Event{}
-			filesToSync := make([]string, len(files))
-			copy(filesToSync, files)
-			files = []string{}
 			syncFiles(client, config.localDir, filesToSync)
 		}
 
@@ -679,7 +676,6 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 
 			event.Name = filename
 			events = append(events, event)
-			files = append(files, filename)
 
 			if cancelFirst == nil { cancelFirst = cancellableTimer(5 * time.Second, doSync) }
 			if cancelLast != nil { (*cancelLast)() }

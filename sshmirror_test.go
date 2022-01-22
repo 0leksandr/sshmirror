@@ -19,9 +19,7 @@ import (
 // TODO: test creating/removing/moving directories
 // TODO: test symlinks
 
-const debug = false
-const simpleFilenames = false
-const integrationTest = false
+var simpleFilenames bool
 var delaysBasic = []float32{
 	0,
 	0.1,
@@ -384,17 +382,22 @@ func modificationChains() []TestModificationChain {
 }
 
 type TestConfig struct {
-	IdentityFile   string
-	RemoteAddress  string
-	RemotePath     string
-	TimeoutSeconds int
-	NrThreads      int
+	IdentityFile    string
+	RemoteAddress   string
+	RemotePath      string
+	TimeoutSeconds  int
+	NrThreads       int
+	Debug           bool
+	SimpleFilenames bool
+	IntegrationTest bool
 }
 func (config TestConfig) isSet() bool {
 	value := reflect.ValueOf(config)
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
-		if reflect.New(field.Type()).Elem().Interface() == field.Interface() { return false }
+		if field.Kind() != reflect.Bool {
+			if reflect.New(field.Type()).Elem().Interface() == field.Interface() { return false }
+		}
 	}
 	return true
 }
@@ -410,6 +413,7 @@ func TestIntegration(t *testing.T) {
 	testConfig := TestConfig{}
 	Must(json.NewDecoder(configFile).Decode(&testConfig))
 	if !testConfig.isSet() { panic("config is not set") }
+	simpleFilenames = testConfig.SimpleFilenames
 
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-test-")
 	PanicIf(err)
@@ -487,7 +491,7 @@ func TestIntegration(t *testing.T) {
 	my.Dump(nrScenarios)
 
 	scenarios := make(chan TestScenario, nrScenarios)
-	if debug { my.Dump2(chains) }
+	if testConfig.Debug { my.Dump2(chains) }
 	for _, chain := range chains {
 		for _, scenario := range chain.scenarios() {
 			scenarios <- scenario
@@ -512,7 +516,7 @@ func TestIntegration(t *testing.T) {
 
 			var syncing CountableWaitGroup
 			SUTsDone.Add(1)
-			if integrationTest {
+			if testConfig.IntegrationTest {
 				command := exec.Command(
 					"./sshmirror",
 					"-i="+testConfig.IdentityFile,
@@ -543,7 +547,7 @@ func TestIntegration(t *testing.T) {
 			}
 
 			awaitSync := func() {
-				if integrationTest {
+				if testConfig.IntegrationTest {
 					time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second)
 				} else {
 					syncing.Wait()
@@ -555,7 +559,7 @@ func TestIntegration(t *testing.T) {
 					my.Dump(scenarioIdx)
 					scenarioIdx++ // MAYBE: atomic
 				})()
-				if debug {
+				if testConfig.Debug {
 					my.Dump(processId)
 					my.Dump2(scenario)
 				}
@@ -612,17 +616,17 @@ func TestIntegration(t *testing.T) {
 							my.Dump2(remote)
 							my.Dump(reflect.DeepEqual(local, remote))
 						}
-						if debug { panic("test failed") }
+						if testConfig.Debug { panic("test failed") }
 					}
 				}
 
 				scenario.applyTarget(processId)
 
 				for _, command := range scenario.before {
-					if debug { my.Dump(command) }
+					if testConfig.Debug { my.Dump(command) }
 
 					if command != "" {
-						if integrationTest {} else { syncing.Add(1) }
+						if !testConfig.IntegrationTest { syncing.Add(1) }
 
 						my.RunCommand(
 							localSandbox,
@@ -635,10 +639,10 @@ func TestIntegration(t *testing.T) {
 				awaitSync()
 
 				for _, command := range scenario.after {
-					if debug { my.Dump(command) }
+					if testConfig.Debug { my.Dump(command) }
 
 					if command != "" {
-						if integrationTest {} else { syncing.Add(1) }
+						if !testConfig.IntegrationTest { syncing.Add(1) }
 
 						my.RunCommand(
 							localSandbox,
