@@ -27,88 +27,47 @@ var PanicIf = my.PanicIf
 var RunCommand = my.RunCommand
 var WriteToStderr = my.WriteToStderr
 
-var files []string
-var events []fsnotify.Event
-
 type Modification interface {
-	add(queue *ModificationsQueue) error
+	Join(queue *ModificationsQueue) error
 }
-type Created struct {
+// problem with created+updated: impossible to determine which one of the two is a moved file. I.e. a file was moved
+// to a new location. Is it created or updated?
+// TODO: return `Created`, and improve created + instantly deleted cases
+
+type Updated struct { // any file, that must be uploaded // MAYBE: Written
 	filename string
 }
-type Updated struct {
+type Deleted struct { // existing file, that was deleted
 	filename string
 }
-type Deleted struct {
-	filename string
-}
-type Moved struct {
+type Moved struct { // existing file, that was moved to a new location
 	from string
 	to   string
 }
-func (created Created) add(queue *ModificationsQueue) error {
-	for _, previouslyCreated := range queue.created {
-		if previouslyCreated.filename == created.filename {
-			return errors.New("created, then created")
-		}
-	}
-	for _, updated := range queue.updated {
-		if updated.filename == created.filename {
-			return errors.New("updated, then created")
-		}
-	}
-	for _, moved := range queue.moved {
-		if moved.to == created.filename {
-			return errors.New("moved to, then created")
-		}
-	}
-	for i, deleted := range queue.deleted {
-		if deleted.filename == created.filename {
-			queue.removeDeleted(i)
-			if err := queue.Add(Updated{filename: created.filename}); err != nil { return err }
-			return nil
-		}
-	}
-	queue.created = append(queue.created, created)
-	return nil
-}
-func (updated Updated) add(queue *ModificationsQueue) error {
-	for _, created := range queue.created {
-		if created.filename == updated.filename {
-			return nil
-		}
-	}
+func (updated Updated) Join(queue *ModificationsQueue) error {
+	addToQueue := true
 	for _, previouslyUpdated := range queue.updated {
 		if previouslyUpdated.filename == updated.filename {
-			return nil
+			addToQueue = false
 		}
 	}
 	for i, moved := range queue.moved {
-		if moved.from == updated.filename {
-			return errors.New("moved from, then updated")
-		}
 		if moved.to == updated.filename {
 			queue.removeMoved(i)
-			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
-			if err := queue.Add(Created{filename: moved.to}); err != nil { return err }
-			return nil
+			if !queue.HasModifications(moved.from) {
+				if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
+			}
 		}
 	}
-	for _, deleted := range queue.deleted {
+	for i, deleted := range queue.deleted {
 		if deleted.filename == updated.filename {
-			return errors.New("deleted, then updated")
+			queue.removeDeleted(i)
 		}
 	}
-	queue.updated = append(queue.updated, updated)
+	if addToQueue { queue.updated = append(queue.updated, updated) }
 	return nil
 }
-func (deleted Deleted) add(queue *ModificationsQueue) error {
-	for i, created := range queue.created {
-		if created.filename == deleted.filename {
-			queue.removeCreated(i)
-			return nil
-		}
-	}
+func (deleted Deleted) Join(queue *ModificationsQueue) error {
 	for i, updated := range queue.updated {
 		if updated.filename == deleted.filename {
 			queue.removeUpdated(i)
@@ -120,7 +79,9 @@ func (deleted Deleted) add(queue *ModificationsQueue) error {
 		}
 		if moved.to == deleted.filename {
 			queue.removeMoved(i)
-			deleted.filename = moved.from
+			if !queue.HasModifications(moved.from) {
+				if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
+			}
 		}
 	}
 	for _, previouslyDeleted := range queue.deleted {
@@ -131,29 +92,23 @@ func (deleted Deleted) add(queue *ModificationsQueue) error {
 	queue.deleted = append(queue.deleted, deleted)
 	return nil
 }
-func (moved Moved) add(queue *ModificationsQueue) error {
-	for i, created := range queue.created {
-		if created.filename == moved.from {
-			queue.created[i].filename = moved.to
-			return nil
-		}
-		if created.filename == moved.to {
-			return errors.New("created, then moved to")
+func (moved Moved) Join(queue *ModificationsQueue) error {
+	if moved.from == moved.to { return errors.New("moving to same location") }
+
+	addToQueue := true
+	for _, deleted := range queue.deleted { // before the next block, because else will be overwritten
+		if deleted.filename == moved.from {
+			return errors.New("deleted, then moved from")
 		}
 	}
-	for _, updated := range queue.updated {
+	for i, updated := range queue.updated {
 		if updated.filename == moved.from {
 			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
 			if err := queue.Add(Updated{filename: moved.to}); err != nil { return err }
-			return nil
+			addToQueue = false
 		}
 		if updated.filename == moved.to {
-			return errors.New("updated, then moved to")
-		}
-	}
-	for _, deleted := range queue.deleted {
-		if deleted.filename == moved.from {
-			return errors.New("deleted, then moved from")
+			queue.removeUpdated(i)
 		}
 	}
 	for i, previouslyMoved := range queue.moved {
@@ -165,18 +120,40 @@ func (moved Moved) add(queue *ModificationsQueue) error {
 		}
 		if previouslyMoved.to == moved.from {
 			queue.moved[i].to = moved.to
-			return nil
+			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
+			addToQueue = false
 		}
 		if previouslyMoved.to == moved.to {
-			// TODO: override?
+			queue.removeMoved(i)
+			if !queue.HasModifications(previouslyMoved.from) {
+				if err := queue.Add(Deleted{filename: previouslyMoved.from}); err != nil { return err }
+			}
 		}
 	}
-	queue.moved = append(queue.moved, moved)
+	if addToQueue { queue.moved = append(queue.moved, moved) }
 	return nil
 }
 
+type ModificationsQueue struct {
+	// MAYBE: modifications []Modification
+	updated []Updated
+	deleted []Deleted
+	moved   []Moved
+}
 func (queue *ModificationsQueue) Add(modification Modification) error {
-	return modification.add(queue)
+	return modification.Join(queue)
+}
+func (queue *ModificationsQueue) HasModifications(filename string) bool {
+	for _, updated := range queue.updated {
+		if updated.filename == filename { return true }
+	}
+	for _, deleted := range queue.deleted {
+		if deleted.filename == filename { return true }
+	}
+	for _, moved := range queue.moved {
+		if moved.to == filename { return true }
+	}
+	return false
 }
 func (queue *ModificationsQueue) Apply(client RemoteClient) {
 	if len(queue.deleted) > 0 {
@@ -189,35 +166,11 @@ func (queue *ModificationsQueue) Apply(client RemoteClient) {
 		client.Move(moved.from, moved.to)
 	}
 
-	if len(queue.created) > 0 || len(queue.updated) > 0 {
-		updatedFilenames := make([]string, 0, len(queue.created) + len(queue.updated))
-		for _, created := range queue.created { updatedFilenames = append(updatedFilenames, created.filename) }
+	if len(queue.updated) > 0 {
+		updatedFilenames := make([]string, 0, len(queue.updated))
 		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
 		client.Upload(updatedFilenames)
 	}
-}
-func (queue *ModificationsQueue) Check() error {
-	filenames := make([]string, 0, len(queue.created) + len(queue.updated) + len(queue.deleted) + len(queue.moved) * 2)
-	for _, created := range queue.created { filenames = append(filenames, created.filename) }
-	for _, updated := range queue.updated { filenames = append(filenames, updated.filename) }
-	for _, deleted := range queue.deleted { filenames = append(filenames, deleted.filename) }
-	for _, moved := range queue.moved {
-		filenames = append(filenames, moved.from)
-		filenames = append(filenames, moved.to)
-	}
-	uniqueFilenames := make(map[string]bool)
-	for _, filename := range filenames { uniqueFilenames[filename] = true }
-
-	if len(filenames) != len(uniqueFilenames) {
-		my.Dump(queue)
-		return errors.New("modifications corrupted")
-	}
-	return nil
-}
-func (queue *ModificationsQueue) removeCreated(i int) {
-	last := len(queue.created) - 1
-	if i != last { queue.created[i] = queue.created[last] }
-	queue.created = queue.created[:last]
 }
 func (queue *ModificationsQueue) removeUpdated(i int) {
 	last := len(queue.updated) - 1
@@ -235,23 +188,12 @@ func (queue *ModificationsQueue) removeMoved(i int) {
 	queue.moved = queue.moved[:last]
 }
 
-type ModificationsQueue struct {
-	created []Created
-	updated []Updated
-	deleted []Deleted
-	moved   []Moved
-}
-
-func readModifications() (*ModificationsQueue, error) {
-	defer func() { events = make([]fsnotify.Event, 0) }()
+func readModifications(events []fsnotify.Event, localDir string) (*ModificationsQueue, error) {
 	queue := ModificationsQueue{}
 	for i := 0; i < len(events); i++ {
 		event := events[i]
 		switch event.Op {
-			case fsnotify.Create:
-				err := queue.Add(Created{filename: event.Name})
-				if err != nil { return nil, err }
-			case fsnotify.Write:
+			case fsnotify.Create, fsnotify.Write:
 				err := queue.Add(Updated{filename: event.Name})
 				if err != nil { return nil, err }
 			case fsnotify.Remove:
@@ -274,7 +216,52 @@ func readModifications() (*ModificationsQueue, error) {
 				if err != nil { return nil, err }
 		}
 	}
-	if err := queue.Check(); err != nil { return nil, err }
+
+	// check for circular move
+	removedCircular := true
+	for removedCircular {
+		var err error
+		removedCircular, err = (func() (bool, error) {
+			for i := 0; i < len(queue.moved); i++ {
+				movedI := queue.moved[i]
+				for j := i+1; j < len(queue.moved); j++ {
+					movedJ := queue.moved[j]
+					if movedI.from == movedJ.to && movedI.to == movedJ.from {
+						queue.removeMoved(j)
+						queue.removeMoved(i)
+						// MAYBE: something smarter
+						var err2 error
+						for _, filename := range [2]string{movedI.from , movedJ.from} {
+							if err3 := queue.Add(Updated{filename: filename}); err3 != nil { err2 = err3 }
+						}
+						return true, err2
+					}
+				}
+			}
+			return false, nil
+		})()
+		if err != nil { return nil, err }
+	}
+
+	// false moves
+	fileEmpty := func(filename string) (bool, error) {
+		fileInfo, err := os.Stat(localDir + string(os.PathSeparator) + filename)
+		return fileInfo.Size() == 0, err
+	}
+	for i := 0; i < len(queue.moved); i++ {
+		moved := queue.moved[i]
+		empty, err := fileEmpty(moved.to)
+		if err != nil { return nil, err }
+		if empty {
+			queue.removeMoved(i)
+			i--
+			if err2 := queue.Add(Updated{filename: moved.to}); err2 != nil { return nil, err2 }
+			if !queue.HasModifications(moved.from) {
+				if err2 := queue.Add(Deleted{filename: moved.from}); err2 != nil { return nil, err2 }
+			}
+		}
+	}
+
 	return &queue, nil
 }
 
@@ -436,16 +423,6 @@ func (client *sshClient) runRemoteCommand(command string) bool {
 	)
 }
 
-func syncModifications(client RemoteClient) {
-	if queue, err := readModifications(); err == nil {
-		queue.Apply(client)
-		files = make([]string, 0)
-	} else {
-		my.WriteToStderr(err.Error())
-		my.WriteToStderr("Applying fallback algorithm")
-		syncFiles(client)
-	}
-}
 func syncFiles(client RemoteClient, localDir string, files []string) {
 	filesUnique := make(map[string]interface{})
 	for _, file := range files { filesUnique[file] = nil }
@@ -460,7 +437,7 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 	existing := make([]string, 0)
 	deleted := make([]string, 0)
 	for file := range filesUnique {
-		if fileExists(localDir + "/" + file) {
+		if fileExists(localDir + string(os.PathSeparator) + file) {
 			existing = append(existing, escapeFile(file))
 		} else {
 			deleted = append(deleted, escapeFile(file))
@@ -616,7 +593,7 @@ func parseArguments() Config {
 
 	stripTrailSlash := func(path string) string {
 		last := len(path) - 1
-		if (len(path) > 0) && (path[last:] == "/" || path[last:] == "\\") { path = path[:last] }
+		if (len(path) > 0) && (path[last:] == string(os.PathSeparator) || path[last:] == "\\") { path = path[:last] }
 		return path
 	}
 	localDir   := stripTrailSlash(flag.Arg(0))
@@ -641,7 +618,8 @@ func parseArguments() Config {
 
 func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 	client := sshClient{}.New(config)
-	var files []string
+	var events []fsnotify.Event
+	var files []string // TODO: remove, use `events` instead
 	var syncing sync.Mutex
 	var queueSize int
 	var cancelFirst *context.CancelFunc
@@ -670,15 +648,23 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 			cancelLast = nil
 		}
 
-		if len(files) == 0 { return }
-		filesToSync := make([]string, len(files))
-		copy(filesToSync, files)
-		files = []string{}
+		if len(events) == 0 { return }
+		queueSize -= len(events) // TODO: atomic
 
-		//syncFiles(client, config.localDir, filesToSync)
-		syncModifications(client)
+		if queue, err := readModifications(events, config.localDir); err == nil {
+			events = []fsnotify.Event{}
+			files = []string{}
+			queue.Apply(client)
+		} else {
+			my.WriteToStderr(err.Error())
+			my.WriteToStderr("Applying fallback algorithm")
+			events = []fsnotify.Event{}
+			filesToSync := make([]string, len(files))
+			copy(filesToSync, files)
+			files = []string{}
+			syncFiles(client, config.localDir, filesToSync)
+		}
 
-		queueSize -= len(filesToSync)
 		if queueSize == 0 { client.onReady() }
 	}
 
@@ -691,6 +677,7 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 			if ignored != nil && ignored.MatchString(filename) { return }
 			queueSize += 1
 
+			event.Name = filename
 			events = append(events, event)
 			files = append(files, filename)
 
@@ -699,6 +686,9 @@ func launchClient(config Config) *sshClient { // TODO: move to `Client.New`
 			cancelLast = cancellableTimer(500 * time.Millisecond, doSync)
 		},
 	)
+
+	client.waitingMaster.Wait()
+	if queueSize == 0 { client.onReady() }
 
 	return client
 }

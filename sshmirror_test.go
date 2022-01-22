@@ -25,6 +25,7 @@ const integrationTest = false
 var delaysBasic = []float32{
 	0,
 	0.1,
+	0.6,
 }
 var delaysMaster = []float32{
 	0,
@@ -142,6 +143,16 @@ func generateFilename(inTarget bool) TestFilename {
 
 	// TODO: ensure that all symbols are used
 	symbols := "abc,.;'[]\\<>?:\"{}|123`~!@#$%^&*()-=_+ абв"
+	//symbols2 := append(
+	//	[]string{},
+	//	(func() []string {
+	//		var result []string
+	//		for _, symbol := range []rune("abc,.;'[]\\<>?:\"{}|123`~!@#$%^&*()-=_+ абв") {
+	//			result = append(result, string(symbol))
+	//		}
+	//		return result
+	//	})()...,
+	//)
 	symbols = "abcdefghijklmnop" // TODO: remove
 	// TODO: guarantee uniqueness
 	nrSymbols := rand.Intn(150) + 1
@@ -175,7 +186,7 @@ func move(from TestFilename, to TestFilename) string {
 	return fmt.Sprintf("mv %s %s", from.escaped(), to.escaped())
 }
 func remove(filename TestFilename) string {
-	return fmt.Sprintf("rm %s", filename.escaped())
+	return fmt.Sprintf("/bin/rm %s", filename.escaped())
 }
 
 func basicModificationChains() []TestModificationChain {
@@ -282,7 +293,8 @@ func basicModificationChains() []TestModificationChain {
 		(func(a TestFilename, bExt TestFilename, cExt TestFilename) TestModificationChain {
 			return TestModificationChain{
 				before: TestModificationsList{
-					TestOptionalModification{write(a, 10)},
+					//TestOptionalModification{write(a, 10)}, // MAYBE: find a normal way to test, and uncomment
+					TestSimpleModification{write(a, 10)},
 					TestSimpleModification{write(bExt, 11)},
 					TestSimpleModification{write(cExt, 12)},
 				},
@@ -293,24 +305,40 @@ func basicModificationChains() []TestModificationChain {
 				},
 			}
 		})(generateFilename(true), generateFilename(false), generateFilename(false)),
-		//(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
-		//	return TestModificationChain{
-		//		before: TestModificationsList{
-		//			TestVariantsModification{[]string{
-		//				create(a),
-		//				write(a, 10),
-		//			}},
-		//			TestVariantsModification{[]string{
-		//				create(b),
-		//				write(b, 10),
-		//			}},
-		//		},
-		//		after:  TestModificationsList{
-		//			TestSimpleModification{move(b, c)},
-		//			TestSimpleModification{move(a, b)},
-		//		},
-		//	}
-		//})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
+			return TestModificationChain{
+				before: TestModificationsList{
+					TestVariantsModification{[]string{
+						create(a),
+						write(a, 10),
+					}},
+					TestVariantsModification{[]string{
+						create(b),
+						write(b, 10),
+					}},
+				},
+				after:  TestModificationsList{
+					TestSimpleModification{move(b, c)},
+					TestSimpleModification{move(a, b)},
+				},
+			}
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
+			return TestModificationChain{
+				before: TestModificationsList{
+					TestSimpleModification{write(a, 10)},
+					TestSimpleModification{write(b, 11)},
+				},
+				after:  TestModificationsList{
+					TestSimpleModification{move(b, c)},
+					TestSimpleModification{move(a, b)},
+					TestVariantsModification{[]string{
+						write(c, 12),
+						write(b, 13),
+					}},
+				},
+			}
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
 	}
 }
 func modificationChains() []TestModificationChain {
@@ -459,8 +487,8 @@ func TestIntegration(t *testing.T) {
 	my.Dump(nrScenarios)
 
 	scenarios := make(chan TestScenario, nrScenarios)
+	if debug { my.Dump2(chains) }
 	for _, chain := range chains {
-		if debug { my.Dump2(chain) }
 		for _, scenario := range chain.scenarios() {
 			scenarios <- scenario
 		}
@@ -569,6 +597,7 @@ func TestIntegration(t *testing.T) {
 							"find . -type f -print0  | sort -z | xargs -0 sha1sum;",
 							"find . \\( -type f -o -type d \\) -print0 | sort -z | xargs -0 stat -c '%n %a'",
 							hashCmd,
+							"cat *",
 						} {
 							my.Dump(cmd)
 							local := make([]string, 0)
@@ -583,6 +612,7 @@ func TestIntegration(t *testing.T) {
 							my.Dump2(remote)
 							my.Dump(reflect.DeepEqual(local, remote))
 						}
+						if debug { panic("test failed") }
 					}
 				}
 
