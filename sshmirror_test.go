@@ -16,8 +16,8 @@ import (
 	"time"
 )
 
-// TODO: test creating/removing/moving directories
-// TODO: test symlinks
+// MAYBE: test file `--`
+// MAYBE: test ignored
 
 var simpleFilenames bool
 var delaysBasic = []float32{
@@ -35,7 +35,7 @@ var delaysMaster = []float32{
 
 type TestFilename string
 func (filename TestFilename) escaped() string {
-	return "'" + strings.Join(strings.Split(string(filename), "'"), `'"'"'`) + "'"
+	return wrapApostrophe(string(filename))
 }
 
 type TestModificationInterface interface {
@@ -83,6 +83,7 @@ func (modifications TestModificationsList) commandsVariants() [][]string {
 	////return Twines(commands).([][]string)
 	//return CartesianProducts(commands).([][]string)
 
+	if len(modifications) == 0 { return nil }
 	nrVariants := 1
 	for _, modification := range modifications {
 		nrVariants *= len(modification.commandVariants())
@@ -139,32 +140,35 @@ func generateFilename(inTarget bool) TestFilename {
 		return TestFilename(fmt.Sprintf("%s/file-%d", dir, fileIndex))
 	}
 
-	// TODO: ensure that all symbols are used
-	symbols := "abc,.;'[]\\<>?:\"{}|123`~!@#$%^&*()-=_+ абв"
-	//symbols2 := append(
-	//	[]string{},
-	//	(func() []string {
-	//		var result []string
-	//		for _, symbol := range []rune("abc,.;'[]\\<>?:\"{}|123`~!@#$%^&*()-=_+ абв") {
-	//			result = append(result, string(symbol))
-	//		}
-	//		return result
-	//	})()...,
-	//)
-	symbols = "abcdefghijklmnop" // TODO: remove
-	// TODO: guarantee uniqueness
+	// MAYBE: separate test for filenames
+	// MAYBE: ensure that all symbols are used
+	var symbols []string
+	for _, symbol := range []rune("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗") {
+		symbols = append(symbols, string(symbol))
+	}
+	symbols = append(
+		symbols,
+		"\\'",
+		//"_",
+		"\\\\'",
+		"\\\\\\'",
+		"\\\\\\\\'",
+		"\\\\\\\\\\'",
+	)
+	// MAYBE: guarantee uniqueness
 	nrSymbols := rand.Intn(150) + 1
 	dir := "./"
 	if inTarget { dir += "target/" }
 	var filename string
 	for i := 0; i < nrSymbols; i++ {
-		filename += string(symbols[rand.Intn(len(symbols))])
+		filename += symbols[rand.Intn(len(symbols))]
 	}
 	if my.InArray(
 		filename,
 		[]string{
 			".",
 			"..",
+			"*",
 			".gitignore",
 			"target",
 		},
@@ -339,6 +343,50 @@ func basicModificationChains() []TestModificationChain {
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
 	}
 }
+func filenameModificationChains() []TestModificationChain {
+	filenames := make([]TestFilename, 0)
+	apostrophes := []string{
+		"\\'",
+		"\\\\'",
+		"\\\\\\'",
+		"\\\\\\\\'",
+		"\\\\\\\\\\'",
+	}
+	for i := 0; i < len(apostrophes)-1; i++ {
+		filenames = append(
+			filenames,
+			TestFilename("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗" + strings.Join(apostrophes[:i], "")),
+		)
+	}
+	chains := []func(filename TestFilename) TestModificationChain{
+		func(filename TestFilename) TestModificationChain {
+			return TestModificationChain{after: TestModificationsList{TestSimpleModification{create(filename)}}}
+		},
+		func(filename TestFilename) TestModificationChain {
+			return TestModificationChain{after: TestModificationsList{TestSimpleModification{write(filename, 10)}}}
+		},
+		func(filename TestFilename) TestModificationChain {
+			filename2 := TestFilename("file") // TODO: do in before
+			return TestModificationChain{after: TestModificationsList{
+				TestSimpleModification{create(filename2)},
+				TestSimpleModification{move(filename2, filename)},
+			}}
+		},
+		func(filename TestFilename) TestModificationChain {
+			return TestModificationChain{after: TestModificationsList{
+				TestSimpleModification{create(filename)},
+				TestSimpleModification{remove(filename)},
+			}}
+		},
+	}
+	chains2 := make([]TestModificationChain, 0, len(filenames) * len(chains))
+	for _, filename := range filenames {
+		for _, chain := range chains {
+			chains2 = append(chains2, chain(filename))
+		}
+	}
+	return chains2
+}
 func modificationChains() []TestModificationChain {
 	basicChains := basicModificationChains()
 	chains := make([]TestModificationChain, 0, (len(basicChains) * len(delaysBasic)) + len(delaysMaster))
@@ -351,6 +399,7 @@ func modificationChains() []TestModificationChain {
 		return simplified
 	}
 	mergeDelays := func(modifications []TestModificationInterface, delaySeconds float32) []TestModificationInterface {
+		if len(modifications) == 0 { return nil }
 		merged := make([]TestModificationInterface, 0, len(modifications) * 2 + 1)
 		merged = append(merged, modifications[0])
 		for i := 1; i < len(modifications); i++ {
@@ -378,6 +427,7 @@ func modificationChains() []TestModificationChain {
 			})
 		}
 	}
+	chains = append(chains, filenameModificationChains()...)
 	return chains
 }
 
@@ -391,7 +441,7 @@ type TestConfig struct {
 	SimpleFilenames bool
 	IntegrationTest bool
 }
-func (config TestConfig) isSet() bool {
+func (config TestConfig) IsSet() bool {
 	value := reflect.ValueOf(config)
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
@@ -412,7 +462,7 @@ func TestIntegration(t *testing.T) {
 	defer func() { Must(configFile.Close()) }()
 	testConfig := TestConfig{}
 	Must(json.NewDecoder(configFile).Decode(&testConfig))
-	if !testConfig.isSet() { panic("config is not set") }
+	if !testConfig.IsSet() { panic("config is not set") }
 	simpleFilenames = testConfig.SimpleFilenames
 
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-test-")
@@ -569,8 +619,8 @@ func TestIntegration(t *testing.T) {
 					remotePath := remoteTarget
 					hashCmd := `
 (
-  find . -type f -print0  | sort -z | xargs -0 sha1sum;
-  find . \( -type f -o -type d \) -print0 | sort -z | xargs -0 stat -c '%n %a'
+  find . -type f -print0  | LC_ALL=C sort -z | xargs -0 sha1sum;
+  find . \( -type f -o -type d \) -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a'
 ) | sha1sum
 `
 					var localHash string
@@ -598,10 +648,10 @@ func TestIntegration(t *testing.T) {
 						my.Dump(localHash)
 						my.Dump(remoteHash)
 						for _, cmd := range []string{
-							"find . -type f -print0  | sort -z | xargs -0 sha1sum;",
-							"find . \\( -type f -o -type d \\) -print0 | sort -z | xargs -0 stat -c '%n %a'",
+							"find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha1sum",
+							"find . \\( -type f -o -type d \\) -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a'",
 							hashCmd,
-							"cat *",
+							"cat -- *",
 						} {
 							my.Dump(cmd)
 							local := make([]string, 0)

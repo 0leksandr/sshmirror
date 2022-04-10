@@ -21,6 +21,14 @@ import (
 )
 
 // TODO: re-sync timeout
+// TODO: move multiple at once with one command (but preserve order of "chained" movements)
+// TODO: ignore special types of files (pipes, block devices etc.)
+// TODO: support symlinks
+// TODO: support directories
+// MAYBE: copy permissions
+// MAYBE: copy files metadata (creation time etc.)
+// MAYBE: automatically trust SSH signatures for new hosts
+// MAYBE: support ":" in filenames
 
 var Must = my.Must
 var PanicIf = my.PanicIf
@@ -349,9 +357,9 @@ func (client *sshClient) Close() error {
 func (client *sshClient) Upload(filenames []string) bool {
 	return client.runCommand(
 		fmt.Sprintf(
-			"rsync -azER -e '%s' %s %s:%s > /dev/null",
+			"rsync -azER -e '%s' -- %s %s:%s > /dev/null",
 			client.sshCmd,
-			strings.Join(filenames, " "),
+			strings.Join(escapeFilenames(filenames), " "),
 			client.config.remoteHost,
 			client.config.remoteDir,
 		),
@@ -360,15 +368,15 @@ func (client *sshClient) Upload(filenames []string) bool {
 }
 func (client *sshClient) Delete(filenames []string) bool {
 	return client.runRemoteCommand(fmt.Sprintf(
-		"rm -rf %s", // TODO: check flags
-		strings.Join(filenames, " "),
+		"rm -rf -- %s", // MAYBE: something more reliable
+		strings.Join(escapeFilenames(filenames), " "),
 	))
 }
 func (client *sshClient) Move(from string, to string) bool {
 	return client.runRemoteCommand(fmt.Sprintf(
-		"mv %s %s",
-		from,
-		to,
+		"mv -- %s %s",
+		wrapApostrophe(from),
+		wrapApostrophe(to),
 	))
 }
 func (client *sshClient) keepMasterConnection() {
@@ -413,11 +421,11 @@ func (client *sshClient) runCommand(command string, onStdout func(string)) bool 
 func (client *sshClient) runRemoteCommand(command string) bool {
 	return client.runCommand(
 		fmt.Sprintf(
-			"%s %s 'cd %s && %s'",
+			"%s %s 'cd %s && (%s)'",
 			client.sshCmd,
 			client.config.remoteHost,
 			client.config.remoteDir,
-			command, // TODO: escape
+			escapeApostrophe(command),
 		),
 		nil,
 	)
@@ -431,9 +439,7 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 		_, err := os.Stat(filename)
 		return !os.IsNotExist(err)
 	}
-	escapeFile := func(file string) string {
-		return fmt.Sprintf("'%s'", file) // TODO: escape "'", "\" and special symbols
-	}
+	escapeFile := wrapApostrophe
 	existing := make([]string, 0)
 	deleted := make([]string, 0)
 	for file := range filesUnique {
@@ -487,6 +493,25 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 	}
 }
 
+func escapeApostrophe(text string) string {
+	//text = strings.Replace(text, "\\", "\\\\", -1)
+	//text = strings.Replace(text, "'", "\\'", -1)
+	//return text
+
+	//return strings.Join(strings.Split(text, "'"), `'"'"'`)
+	return strings.Replace(text, "'", `'"'"'`, -1)
+}
+func wrapApostrophe(text string) string {
+	return fmt.Sprintf("'%s'", escapeApostrophe(text))
+}
+func escapeFilenames(filenames []string) []string {
+	escapedFilenames := make([]string, 0, len(filenames))
+	for _, filename := range filenames {
+		escapedFilenames = append(escapedFilenames, wrapApostrophe(filename))
+	}
+	return escapedFilenames
+}
+
 func watchDirRecursive(path string, ignored *regexp.Regexp, processor func(fsnotify.Event)) context.CancelFunc {
 	watcher, err := fsnotify.NewWatcher()
 	PanicIf(err)
@@ -532,7 +557,6 @@ func watchDirRecursive(path string, ignored *regexp.Regexp, processor func(fsnot
 		Must(watcher.Close())
 	}
 }
-
 func stopwatch(description string, operation func() bool) bool {
 	fmt.Print(description)
 	start := time.Now()
@@ -554,7 +578,6 @@ func stopwatch(description string, operation func() bool) bool {
 	if result { fmt.Println(" done in " + time.Since(start).String()) }
 	return result
 }
-
 func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFunc {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	go func() {
