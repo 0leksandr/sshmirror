@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/0leksandr/my.go"
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"os/exec"
 	"reflect"
@@ -18,8 +17,8 @@ import (
 
 // MAYBE: test file `--`
 // MAYBE: test ignored
+// MAYBE: duplicate filenames in master chains
 
-var simpleFilenames bool
 var delaysBasic = []float32{
 	0,
 	0.1,
@@ -113,6 +112,7 @@ type TestModificationChain struct { // TODO: rename!
 }
 func (chain TestModificationChain) scenarios() []TestScenario {
 	variantsBefore := chain.before.commandsVariants()
+	if len(variantsBefore) == 0 { variantsBefore = [][]string{{""}} }
 	variantsAfter := chain.after.commandsVariants()
 	scenarios := make([]TestScenario, 0, len(variantsBefore) * len(variantsAfter))
 	for _, before := range variantsBefore {
@@ -133,49 +133,43 @@ func (chain TestModificationChain) scenarios() []TestScenario {
 
 var fileIndex = 0
 func generateFilename(inTarget bool) TestFilename {
-	if simpleFilenames {
-		dir := "."
-		if inTarget { dir += "/target" }
-		fileIndex++
-		return TestFilename(fmt.Sprintf("%s/file-%d", dir, fileIndex))
-	}
+	dir := "."
+	if inTarget { dir += "/target" }
+	fileIndex++
+	return TestFilename(fmt.Sprintf("%s/file-%d", dir, fileIndex))
 
-	// MAYBE: separate test for filenames
-	// MAYBE: ensure that all symbols are used
-	var symbols []string
-	for _, symbol := range []rune("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗") {
-		symbols = append(symbols, string(symbol))
-	}
-	symbols = append(
-		symbols,
-		"\\'",
-		//"_",
-		"\\\\'",
-		"\\\\\\'",
-		"\\\\\\\\'",
-		"\\\\\\\\\\'",
-	)
-	// MAYBE: guarantee uniqueness
-	nrSymbols := rand.Intn(150) + 1
-	dir := "./"
-	if inTarget { dir += "target/" }
-	var filename string
-	for i := 0; i < nrSymbols; i++ {
-		filename += symbols[rand.Intn(len(symbols))]
-	}
-	if my.InArray(
-		filename,
-		[]string{
-			".",
-			"..",
-			"*",
-			".gitignore",
-			"target",
-		},
-	) {
-		return generateFilename(inTarget)
-	}
-	return TestFilename(dir + filename)
+	//var symbols []string
+	//for _, symbol := range []rune("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗") {
+	//	symbols = append(symbols, string(symbol))
+	//}
+	//symbols = append(
+	//	symbols,
+	//	"\\'",
+	//	"\\\\'",
+	//	"\\\\\\'",
+	//	"\\\\\\\\'",
+	//	"\\\\\\\\\\'",
+	//)
+	//nrSymbols := rand.Intn(150) + 1
+	//dir := "./"
+	//if inTarget { dir += "target/" }
+	//var filename string
+	//for i := 0; i < nrSymbols; i++ {
+	//	filename += symbols[rand.Intn(len(symbols))]
+	//}
+	//if my.InArray(
+	//	filename,
+	//	[]string{
+	//		".",
+	//		"..",
+	//		"*",
+	//		".gitignore",
+	//		"target",
+	//	},
+	//) {
+	//	return generateFilename(inTarget)
+	//}
+	//return TestFilename(dir + filename)
 }
 func create(filename TestFilename) string {
 	return fmt.Sprintf("touch %s", filename.escaped())
@@ -344,7 +338,6 @@ func basicModificationChains() []TestModificationChain {
 	}
 }
 func filenameModificationChains() []TestModificationChain {
-	filenames := make([]TestFilename, 0)
 	apostrophes := []string{
 		"\\'",
 		"\\\\'",
@@ -352,12 +345,14 @@ func filenameModificationChains() []TestModificationChain {
 		"\\\\\\\\'",
 		"\\\\\\\\\\'",
 	}
+	filenames := make([]TestFilename, 0, len(apostrophes))
 	for i := 0; i < len(apostrophes)-1; i++ {
 		filenames = append(
 			filenames,
 			TestFilename("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗" + strings.Join(apostrophes[:i], "")),
 		)
 	}
+	for i, filename := range filenames { filenames[i] = "./target/" + filename }
 	chains := []func(filename TestFilename) TestModificationChain{
 		func(filename TestFilename) TestModificationChain {
 			return TestModificationChain{after: TestModificationsList{TestSimpleModification{create(filename)}}}
@@ -366,17 +361,17 @@ func filenameModificationChains() []TestModificationChain {
 			return TestModificationChain{after: TestModificationsList{TestSimpleModification{write(filename, 10)}}}
 		},
 		func(filename TestFilename) TestModificationChain {
-			filename2 := TestFilename("file") // TODO: do in before
-			return TestModificationChain{after: TestModificationsList{
-				TestSimpleModification{create(filename2)},
-				TestSimpleModification{move(filename2, filename)},
-			}}
+			filename2 := filename + "2"
+			return TestModificationChain{
+				before: TestModificationsList{TestSimpleModification{create(filename2)}},
+				after: TestModificationsList{TestSimpleModification{move(filename2, filename)}},
+			}
 		},
 		func(filename TestFilename) TestModificationChain {
-			return TestModificationChain{after: TestModificationsList{
-				TestSimpleModification{create(filename)},
-				TestSimpleModification{remove(filename)},
-			}}
+			return TestModificationChain{
+				before: TestModificationsList{TestSimpleModification{create(filename)}},
+				after: TestModificationsList{TestSimpleModification{remove(filename)}},
+			}
 		},
 	}
 	chains2 := make([]TestModificationChain, 0, len(filenames) * len(chains))
@@ -438,7 +433,6 @@ type TestConfig struct {
 	TimeoutSeconds  int
 	NrThreads       int
 	Debug           bool
-	SimpleFilenames bool
 	IntegrationTest bool
 }
 func (config TestConfig) IsSet() bool {
@@ -463,7 +457,6 @@ func TestIntegration(t *testing.T) {
 	testConfig := TestConfig{}
 	Must(json.NewDecoder(configFile).Decode(&testConfig))
 	if !testConfig.IsSet() { panic("config is not set") }
-	simpleFilenames = testConfig.SimpleFilenames
 
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-test-")
 	PanicIf(err)

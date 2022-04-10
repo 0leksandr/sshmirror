@@ -20,11 +20,13 @@ import (
 	"time"
 )
 
+// TODO: upload directories on initial sync
 // TODO: re-sync timeout
-// TODO: move multiple at once with one command (but preserve order of "chained" movements)
 // TODO: ignore special types of files (pipes, block devices etc.)
 // TODO: support symlinks
 // TODO: support directories
+// MAYBE: automatically adjust timeout based on server response rate
+// MAYBE: move multiple at once with one command (but preserve order of "chained" movements)
 // MAYBE: copy permissions
 // MAYBE: copy files metadata (creation time etc.)
 // MAYBE: automatically trust SSH signatures for new hosts
