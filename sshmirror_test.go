@@ -599,7 +599,7 @@ func TestIntegration(t *testing.T) {
 				command := exec.Command(
 					"./sshmirror",
 					"-i="+testConfig.IdentityFile,
-					"-v=1",
+					"-v=0",
 					localTarget,
 					testConfig.RemoteAddress,
 					remoteTarget,
@@ -618,6 +618,7 @@ func TestIntegration(t *testing.T) {
 					identityFile: testConfig.IdentityFile,
 					connTimeout:  testConfig.TimeoutSeconds,
 					verbosity:    0,
+					ignored:      nil,
 				})
 				client.SetLogger(logger)
 				client.onReady = func() {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/0leksandr/my.go"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/signal"
 	"os/user"
@@ -62,8 +61,6 @@ func (locker *Locker) Wait() {
 	locker.wg.Wait()
 }
 
-var ignored *regexp.Regexp // MAYBE: move to `Config`
-
 type Config struct {
 	// parameters
 	localDir   string
@@ -74,158 +71,60 @@ type Config struct {
 	identityFile string
 	connTimeout  int
 	verbosity    int
+	ignored      *regexp.Regexp
 }
+func (Config) ParseArguments() Config {
+	identityFile := flag.String("i", "", "identity file (rsa)")
+	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
+	verbosity    := flag.Int("v", 2, "verbosity level (0-3)")
+	exclude      := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
 
-type RemoteClient interface {
-	io.Closer
-	LoggerAware
-	Upload(filenames []string) error
-	Delete(filenames []string) error
-	Move(from string, to string) error
-	Ready() *Locker
-}
+	flag.Parse()
 
-type sshClient struct { // TODO: rename
-	RemoteClient
-	io.Closer
-	config      Config
-	sshCmd      string
-	controlPath string
-	masterReady *Locker
-	done        bool // MAYBE: masterConnectionProcess
-	logger      Logger
-}
-func (sshClient) New(config Config) *sshClient {
-	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
-	PanicIf(err)
-	controlPath := controlPathFile.Name()
-	Must(os.Remove(controlPath))
-
-	sshCmd := fmt.Sprintf(
-		"ssh -o ControlMaster=auto -o ControlPath=%s -o ConnectTimeout=%d -o ConnectionAttempts=1",
-		controlPath,
-		config.connTimeout,
-	)
-	if config.identityFile != "" { sshCmd += " -i " + config.identityFile }
-
-	var waitingMaster Locker
-
-	client := &sshClient{
-		config:      config,
-		sshCmd:      sshCmd,
-		controlPath: controlPath,
-		masterReady: &waitingMaster,
-		logger:      NullLogger{},
-	}
-
-	client.masterReady.Lock()
-	go client.keepMasterConnection()
-
-	return client
-}
-func (client *sshClient) Close() error {
-	client.done = true
-	client.closeMaster()
-	_ = os.Remove(client.controlPath)
-	return nil
-}
-func (client *sshClient) Upload(filenames []string) error {
-	if client.runCommand(
-		fmt.Sprintf(
-			"rsync -azER -e '%s' -- %s %s:%s",
-			client.sshCmd,
-			strings.Join(escapeFilenames(filenames), " "),
-			client.config.remoteHost,
-			client.config.remoteDir,
-		),
-		nil,
-	) {
-		return nil
-	} else {
-		return errors.New("could not upload") // MAYBE: actual error
-	}
-}
-func (client *sshClient) Delete(filenames []string) error {
-	if client.runRemoteCommand(fmt.Sprintf(
-		"rm -rf -- %s", // MAYBE: something more reliable
-		strings.Join(escapeFilenames(filenames), " "),
-	)) {
-		return nil
-	} else {
-		return errors.New("cound not delete") // MAYBE: actual error
-	}
-}
-func (client *sshClient) Move(from string, to string) error {
-	if client.runRemoteCommand(fmt.Sprintf(
-		"mv -- %s %s",
-		wrapApostrophe(from),
-		wrapApostrophe(to),
-	)) {
-		return nil
-	} else {
-		return errors.New("could not move") // MAYBE: actual error
-	}
-}
-func (client *sshClient) Ready() *Locker {
-	return client.masterReady
-}
-func (client *sshClient) SetLogger(logger Logger) {
-	client.logger = logger
-}
-func (client *sshClient) keepMasterConnection() {
-	client.closeMaster()
-
-	for {
-		fmt.Print("Establishing SSH Master connection... ") // MAYBE: stopwatch
-
-		// MAYBE: check if it doesn't hang on server after disconnection
-		client.runCommand(
-			fmt.Sprintf(
-				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
-				client.sshCmd,
-				client.config.connTimeout,
-				client.config.remoteHost,
-			),
-			func(out string) {
-				fmt.Println(out)
-				client.logger.Debug("master ready")
-				client.masterReady.Unlock() // MAYBE: ensure this happens only once
-			},
+	if flag.NArg() != 3 {
+		WriteToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
+		flag.PrintDefaults()
+		WriteToStderr(
+			"Required parameters:\n" +
+				"  SOURCE - local directory (absolute path)\n" +
+				"  HOST (IP or HOST or USER@HOST)\n" +
+				"  DESTINATION - remote directory (absolute path)]",
 		)
-
-		client.masterReady.Lock()
-		client.closeMaster()
-		if client.done { break }
-		time.Sleep(time.Duration(client.config.connTimeout) * time.Second)
+		os.Exit(1)
 	}
-}
-func (client *sshClient) closeMaster() {
-	client.runCommand(
-		fmt.Sprintf("%s -O exit %s 2>/dev/null", client.sshCmd, client.config.remoteHost),
-		nil,
-	)
-}
-func (client *sshClient) runCommand(command string, onStdout func(string)) bool {
-	client.logger.Debug("running command", command)
 
-	return RunCommand(
-		client.config.localDir,
-		command,
-		onStdout,
-		client.logger.Error,
-	)
-}
-func (client *sshClient) runRemoteCommand(command string) bool {
-	return client.runCommand(
-		fmt.Sprintf(
-			"%s %s 'cd %s && (%s)'",
-			client.sshCmd,
-			client.config.remoteHost,
-			client.config.remoteDir,
-			escapeApostrophe(command),
-		),
-		nil,
-	)
+	var ignored *regexp.Regexp
+	if *exclude != "" {
+		var err error
+		ignored, err = regexp.Compile(*exclude)
+		PanicIf(err)
+	}
+
+	stripTrailSlash := func(path string) string {
+		last := len(path) - 1
+		if (len(path) > 0) && (path[last:] == string(os.PathSeparator) || path[last:] == "\\") { path = path[:last] }
+		return path
+	}
+	localDir   := stripTrailSlash(flag.Arg(0))
+	remoteHost := flag.Arg(1)
+	remoteDir  := stripTrailSlash(flag.Arg(2))
+
+	if localDir[:2] == "~/" {
+		usr, err := user.Current()
+		PanicIf(err)
+		dir := usr.HomeDir
+		localDir = filepath.Join(dir, localDir[2:])
+	}
+
+	return Config{
+		localDir:     localDir,
+		remoteHost:   remoteHost,
+		remoteDir:    remoteDir,
+		identityFile: *identityFile,
+		connTimeout:  *connTimeout,
+		verbosity:    *verbosity,
+		ignored:      ignored,
+	}
 }
 
 type RemoteManager struct {
@@ -381,25 +280,6 @@ func (manager RemoteManager) message(filenames []string, sign string, action str
 	}
 }
 
-func escapeApostrophe(text string) string {
-	//text = strings.Replace(text, "\\", "\\\\", -1)
-	//text = strings.Replace(text, "'", "\\'", -1)
-	//return text
-
-	//return strings.Join(strings.Split(text, "'"), `'"'"'`)
-	return strings.Replace(text, "'", `'"'"'`, -1)
-}
-func wrapApostrophe(text string) string {
-	return fmt.Sprintf("'%s'", escapeApostrophe(text))
-}
-func escapeFilenames(filenames []string) []string {
-	escapedFilenames := make([]string, 0, len(filenames))
-	for _, filename := range filenames {
-		escapedFilenames = append(escapedFilenames, wrapApostrophe(filename))
-	}
-	return escapedFilenames
-}
-
 func stopwatch(description string, operation func() error) error {
 	fmt.Print(description)
 	start := time.Now()
@@ -430,58 +310,6 @@ func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFun
 	return &cancel
 }
 
-func parseArguments() Config {
-	identityFile := flag.String("i", "", "identity file (rsa)")
-	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
-	verbosity    := flag.Int("v", 2, "verbosity level (0-3)")
-	exclude      := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
-
-	flag.Parse()
-
-	if flag.NArg() != 3 {
-		WriteToStderr("Usage: of " + os.Args[0] + ":\nOptional flags:")
-		flag.PrintDefaults()
-		WriteToStderr(
-			"Required parameters:\n" +
-				"  SOURCE - local directory (absolute path)\n" +
-				"  HOST (IP or HOST or USER@HOST)\n" +
-				"  DESTINATION - remote directory (absolute path)]",
-		)
-		os.Exit(1)
-	}
-
-	if *exclude != "" {
-		var err error
-		ignored, err = regexp.Compile(*exclude)
-		PanicIf(err)
-	}
-
-	stripTrailSlash := func(path string) string {
-		last := len(path) - 1
-		if (len(path) > 0) && (path[last:] == string(os.PathSeparator) || path[last:] == "\\") { path = path[:last] }
-		return path
-	}
-	localDir   := stripTrailSlash(flag.Arg(0))
-	remoteHost := flag.Arg(1)
-	remoteDir  := stripTrailSlash(flag.Arg(2))
-
-	if localDir[:2] == "~/" {
-		usr, err := user.Current()
-		PanicIf(err)
-		dir := usr.HomeDir
-		localDir = filepath.Join(dir, localDir[2:])
-	}
-
-	return Config{
-		localDir:     localDir,
-		remoteHost:   remoteHost,
-		remoteDir:    remoteDir,
-		identityFile: *identityFile,
-		connTimeout:  *connTimeout,
-		verbosity:    *verbosity,
-	}
-}
-
 type SSHMirror struct {
 	io.Closer
 	LoggerAware
@@ -494,7 +322,7 @@ type SSHMirror struct {
 func (SSHMirror) New(config Config) *SSHMirror {
 	return &SSHMirror{
 		root:     config.localDir,
-		listener: FsnotifyListener{}.New(config.localDir, ignored),
+		listener: FsnotifyListener{}.New(config.localDir, config.ignored),
 		remote:   RemoteManager{}.New(config),
 		logger:   NullLogger{},
 		onReady:  func() {},
@@ -592,5 +420,5 @@ func (client *SSHMirror) Run() {
 }
 
 func main() {
-	SSHMirror{}.New(parseArguments()).Run()
+	SSHMirror{}.New(Config{}.ParseArguments()).Run()
 }
