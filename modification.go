@@ -259,20 +259,3 @@ type UploadingModificationsQueue struct {
 	deleted []Deleted
 	moved   []Moved
 }
-func (queue UploadingModificationsQueue) Apply(client RemoteClient) {
-	if len(queue.deleted) > 0 {
-		deletedFilenames := make([]string, 0, len(queue.deleted))
-		for _, deleted := range queue.deleted { deletedFilenames = append(deletedFilenames, deleted.filename) }
-		client.Delete(deletedFilenames)
-	}
-
-	for _, moved := range queue.moved {
-		client.Move(moved.from, moved.to)
-	}
-
-	if len(queue.updated) > 0 {
-		updatedFilenames := make([]string, 0, len(queue.updated))
-		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
-		client.Upload(updatedFilenames)
-	}
-}

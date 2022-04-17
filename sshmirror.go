@@ -31,7 +31,6 @@ import (
 // MAYBE: copy permissions
 // MAYBE: copy files metadata (creation time etc.)
 // MAYBE: upload new files with scp
-// MAYBE: support ":" in filenames
 
 var Must = my.Must
 var PanicIf = my.PanicIf
@@ -64,7 +63,6 @@ func (locker *Locker) Wait() {
 }
 
 var ignored *regexp.Regexp // MAYBE: move to `Config`
-var verbosity int
 
 type Config struct {
 	// parameters
@@ -75,14 +73,15 @@ type Config struct {
 	// flags
 	identityFile string
 	connTimeout  int
+	verbosity    int
 }
 
 type RemoteClient interface {
 	io.Closer
 	LoggerAware
-	Upload(filenames []string) bool // TODO: return error
-	Delete(filenames []string) bool
-	Move(from string, to string) bool
+	Upload(filenames []string) error
+	Delete(filenames []string) error
+	Move(from string, to string) error
 	Ready() *Locker
 }
 
@@ -130,8 +129,8 @@ func (client *sshClient) Close() error {
 	_ = os.Remove(client.controlPath)
 	return nil
 }
-func (client *sshClient) Upload(filenames []string) bool {
-	return client.runCommand(
+func (client *sshClient) Upload(filenames []string) error {
+	if client.runCommand(
 		fmt.Sprintf(
 			"rsync -azER -e '%s' -- %s %s:%s",
 			client.sshCmd,
@@ -140,20 +139,32 @@ func (client *sshClient) Upload(filenames []string) bool {
 			client.config.remoteDir,
 		),
 		nil,
-	)
+	) {
+		return nil
+	} else {
+		return errors.New("could not upload") // MAYBE: actual error
+	}
 }
-func (client *sshClient) Delete(filenames []string) bool {
-	return client.runRemoteCommand(fmt.Sprintf(
+func (client *sshClient) Delete(filenames []string) error {
+	if client.runRemoteCommand(fmt.Sprintf(
 		"rm -rf -- %s", // MAYBE: something more reliable
 		strings.Join(escapeFilenames(filenames), " "),
-	))
+	)) {
+		return nil
+	} else {
+		return errors.New("cound not delete") // MAYBE: actual error
+	}
 }
-func (client *sshClient) Move(from string, to string) bool {
-	return client.runRemoteCommand(fmt.Sprintf(
+func (client *sshClient) Move(from string, to string) error {
+	if client.runRemoteCommand(fmt.Sprintf(
 		"mv -- %s %s",
 		wrapApostrophe(from),
 		wrapApostrophe(to),
-	))
+	)) {
+		return nil
+	} else {
+		return errors.New("could not move") // MAYBE: actual error
+	}
 }
 func (client *sshClient) Ready() *Locker {
 	return client.masterReady
@@ -217,7 +228,86 @@ func (client *sshClient) runRemoteCommand(command string) bool {
 	)
 }
 
-func syncFiles(client RemoteClient, localDir string, files []string) {
+type RemoteManager struct {
+	io.Closer
+	LoggerAware
+	client    RemoteClient
+	verbosity int // MAYBE: enum
+	localDir  string
+}
+func (RemoteManager) New(config Config) RemoteManager {
+	return RemoteManager{
+		client:    sshClient{}.New(config),
+		verbosity: config.verbosity,
+		localDir:  config.localDir,
+	}
+}
+func (manager RemoteManager) Close() error {
+	return manager.client.Close()
+}
+func (manager RemoteManager) SetLogger(logger Logger) {
+	manager.client.SetLogger(logger)
+}
+func (manager RemoteManager) Ready() *Locker {
+	return manager.client.Ready()
+}
+func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
+	doSync := func(message string, operation func() error) error {
+		if message == "" {
+			return operation()
+		} else {
+			return stopwatch(message, operation)
+		}
+	}
+
+	if len(queue.deleted) > 0 {
+		deletedFilenames := make([]string, 0, len(queue.deleted))
+		for _, deleted := range queue.deleted { deletedFilenames = append(deletedFilenames, deleted.filename) }
+		if err := doSync(
+			manager.message(deletedFilenames, "-", "deleting"),
+			func() error { return manager.client.Delete(deletedFilenames) },
+		); err != nil { return err }
+	}
+
+	if len(queue.moved) > 0 {
+		movedFilenames := make([]string, 0, len(queue.moved))
+		for _, moved := range queue.moved { movedFilenames = append(movedFilenames, moved.from) }
+		if err := doSync(
+			manager.message(movedFilenames, "^", "moving"),
+			func() error {
+				for _, moved := range queue.moved {
+					if err := manager.client.Move(moved.from, moved.to); err != nil { return err }
+				}
+				return nil
+			},
+		); err != nil { return err }
+	}
+
+	if len(queue.updated) > 0 {
+		updatedFilenames := make([]string, 0, len(queue.updated))
+		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
+		if err := doSync(
+			manager.message(updatedFilenames, "+", "uploading"),
+			func() error { return manager.client.Upload(updatedFilenames) },
+		); err != nil { return err }
+	}
+
+	return nil
+}
+func (manager RemoteManager) FallbackQueue(queue UploadingModificationsQueue) { // MAYBE: legacy, remove
+	var files []string
+	for _, updated := range queue.updated { files = append(files, updated.filename) }
+	for _, deleted := range queue.deleted { files = append(files, deleted.filename) }
+	for _, moved := range queue.moved {
+		files = append(files, moved.from)
+		files = append(files, moved.to)
+	}
+
+	manager.FallbackFiles(files)
+}
+func (manager RemoteManager) FallbackFiles(files []string) {
+	client := manager.client
+	verbosity := manager.verbosity
 	filesUnique := make(map[string]interface{})
 	for _, file := range files { filesUnique[file] = nil }
 
@@ -229,7 +319,7 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 	existing := make([]string, 0)
 	deleted := make([]string, 0)
 	for file := range filesUnique {
-		if fileExists(localDir + string(os.PathSeparator) + file) {
+		if fileExists(manager.localDir + string(os.PathSeparator) + file) {
 			existing = append(existing, escapeFile(file))
 		} else {
 			deleted = append(deleted, escapeFile(file))
@@ -238,8 +328,8 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 
 	result := true
 	if verbosity == 0 {
-		if len(existing) > 0 { result = result && client.Upload(existing) }
-		if len(deleted) > 0 { result = result && client.Delete(deleted) }
+		if len(existing) > 0 { result = result && (client.Upload(existing) == nil) }
+		if len(deleted) > 0 { result = result && (client.Delete(deleted) == nil) }
 	} else {
 		if len(existing) > 0 {
 			var uploadMessage string
@@ -253,8 +343,8 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 			}
 			result = stopwatch(
 				uploadMessage,
-				func() bool { return client.Upload(existing) },
-			)
+				func() error { return client.Upload(existing) },
+			) == nil
 		}
 
 		if result && len(deleted) > 0 {
@@ -269,13 +359,25 @@ func syncFiles(client RemoteClient, localDir string, files []string) {
 			}
 			result = stopwatch(
 				uploadMessage,
-				func() bool { return client.Delete(deleted) },
-			)
+				func() error { return client.Delete(deleted) },
+			) == nil
 		}
 	}
 
 	if !result {
-		syncFiles(client, localDir, files)
+		manager.FallbackFiles(files)
+	}
+}
+func (manager RemoteManager) message(filenames []string, sign string, action string) string {
+	if manager.verbosity == 0 { return "" }
+	if manager.verbosity == 1 { return fmt.Sprintf("%s%d", sign, len(filenames)) }
+
+	message := fmt.Sprintf("%s %d file", action, len(filenames))
+	if len(filenames) > 1 { message += "s" }
+	if manager.verbosity == 2 {
+		return message
+	} else {
+		return message + ": " + strings.Join(filenames, " ")
 	}
 }
 
@@ -298,7 +400,7 @@ func escapeFilenames(filenames []string) []string {
 	return escapedFilenames
 }
 
-func stopwatch(description string, operation func() bool) bool {
+func stopwatch(description string, operation func() error) error {
 	fmt.Print(description)
 	start := time.Now()
 	var stopTicking *context.CancelFunc
@@ -314,10 +416,10 @@ func stopwatch(description string, operation func() bool) bool {
 	}
 	tick()
 
-	result := operation()
+	err := operation()
 	(*stopTicking)()
-	if result { fmt.Println(" done in " + time.Since(start).String()) }
-	return result
+	if err == nil { fmt.Println(" done in " + time.Since(start).String()) }
+	return err
 }
 func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFunc {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -329,10 +431,10 @@ func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFun
 }
 
 func parseArguments() Config {
-	identityFile  := flag.String("i", "", "identity file (rsa)")
-	connTimeout   := flag.Int("t", 5, "connection timeout (seconds)")
-	verbosityFlag := flag.Int("v", 2, "verbosity level (0-3)")
-	exclude       := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
+	identityFile := flag.String("i", "", "identity file (rsa)")
+	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
+	verbosity    := flag.Int("v", 2, "verbosity level (0-3)")
+	exclude      := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
 
 	flag.Parse()
 
@@ -348,7 +450,6 @@ func parseArguments() Config {
 		os.Exit(1)
 	}
 
-	verbosity = *verbosityFlag
 	if *exclude != "" {
 		var err error
 		ignored, err = regexp.Compile(*exclude)
@@ -377,6 +478,7 @@ func parseArguments() Config {
 		remoteDir:    remoteDir,
 		identityFile: *identityFile,
 		connTimeout:  *connTimeout,
+		verbosity:    *verbosity,
 	}
 }
 
@@ -385,7 +487,7 @@ type SSHMirror struct {
 	LoggerAware
 	root     string
 	listener Listener
-	remote   RemoteClient
+	remote   RemoteManager
 	logger   Logger
 	onReady  func() // only for test
 }
@@ -393,7 +495,7 @@ func (SSHMirror) New(config Config) *SSHMirror {
 	return &SSHMirror{
 		root:     config.localDir,
 		listener: FsnotifyListener{}.New(config.localDir, ignored),
-		remote:   sshClient{}.New(config),
+		remote:   RemoteManager{}.New(config),
 		logger:   NullLogger{},
 		onReady:  func() {},
 	}
@@ -448,11 +550,13 @@ func (client *SSHMirror) Run() {
 		}
 
 		if uploadingModificationsQueue, err := queue.Flush(client.root); err == nil {
-			uploadingModificationsQueue.Apply(client.remote) // MAYBE: swap
+			if not := client.remote.Sync(uploadingModificationsQueue); not != nil {
+				client.remote.FallbackQueue(uploadingModificationsQueue)
+			}
 		} else {
 			client.logger.Error(err.Error())
 			client.logger.Error("Applying fallback algorithm")
-			syncFiles(client.remote, client.root, client.listener.Fallback())
+			client.remote.FallbackFiles(client.listener.Fallback())
 		}
 
 		if queue.IsEmpty() { client.onReady() }

@@ -17,9 +17,10 @@ import (
 
 // TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
 // MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
-// MAYBE: test tricky filenames: `--`, `.`, `..`, `*`
+// MAYBE: test tricky filenames: `--`, `.`, `..`, `*`, `:`
 // MAYBE: test ignored
 // MAYBE: duplicate filenames in master chains
+// MAYBE: test fallback
 
 var delaysBasic = [...]float32{ // TODO: non-constant delays (pseudo-random pauses)
 	0.,
@@ -616,6 +617,7 @@ func TestIntegration(t *testing.T) {
 					remoteDir:    remoteTarget,
 					identityFile: testConfig.IdentityFile,
 					connTimeout:  testConfig.TimeoutSeconds,
+					verbosity:    0,
 				})
 				client.SetLogger(logger)
 				client.onReady = func() {
