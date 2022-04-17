@@ -20,7 +20,7 @@ import (
 )
 
 // TODO: upload directories on initial sync
-// TODO: re-sync timeout
+// TODO: re-sync with timeout on error
 // TODO: ignore special types of files (pipes, block devices etc.)
 // TODO: support symlinks
 // TODO: support directories
@@ -31,7 +31,6 @@ import (
 // MAYBE: copy permissions
 // MAYBE: copy files metadata (creation time etc.)
 // MAYBE: upload new files with scp
-// MAYBE: automatically trust SSH signatures for new hosts
 // MAYBE: support ":" in filenames
 
 var Must = my.Must
@@ -39,20 +38,29 @@ var PanicIf = my.PanicIf
 var RunCommand = my.RunCommand
 var WriteToStderr = my.WriteToStderr
 
-type CountableWaitGroup struct {
-	wg    sync.WaitGroup
-	count int
+type Locker struct {
+	wg     sync.WaitGroup
+	mutex  sync.Mutex
+	locked bool
 }
-func (wg *CountableWaitGroup) Add(c int) {
-	wg.count += c
-	wg.wg.Add(c)
+func (locker *Locker) Lock() {
+	locker.mutex.Lock()
+	if !locker.locked {
+		locker.locked = true
+		locker.wg.Add(1)
+	}
+	locker.mutex.Unlock()
 }
-func (wg *CountableWaitGroup) DoneAll() {
-	//for wg.count > 0 { wg.Add(-1) }
-	wg.Add(-wg.count)
+func (locker *Locker) Unlock() {
+	locker.mutex.Lock()
+	if locker.locked {
+		locker.locked = false
+		locker.wg.Done()
+	}
+	locker.mutex.Unlock()
 }
-func (wg *CountableWaitGroup) Wait() {
-	wg.wg.Wait()
+func (locker *Locker) Wait() {
+	locker.wg.Wait()
 }
 
 var ignored *regexp.Regexp // MAYBE: move to `Config`
@@ -70,22 +78,23 @@ type Config struct {
 }
 
 type RemoteClient interface {
+	io.Closer
+	LoggerAware
 	Upload(filenames []string) bool // TODO: return error
 	Delete(filenames []string) bool
 	Move(from string, to string) bool
+	Ready() *Locker
 }
 
 type sshClient struct { // TODO: rename
 	RemoteClient
 	io.Closer
-	listener      *Listener // MAYBE: store it (and controlPath) in lambdas, that should be called in `Close`
-	config        Config
-	sshCmd        string
-	controlPath   string
-	waitingMaster *CountableWaitGroup
-	done          bool // TODO: rename
-	onReady       func() // just for test
-	logger        LoggerInterface
+	config      Config
+	sshCmd      string
+	controlPath string
+	masterReady *Locker
+	done        bool // MAYBE: masterConnectionProcess
+	logger      Logger
 }
 func (sshClient) New(config Config) *sshClient {
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-")
@@ -100,29 +109,26 @@ func (sshClient) New(config Config) *sshClient {
 	)
 	if config.identityFile != "" { sshCmd += " -i " + config.identityFile }
 
-	var waitingMaster CountableWaitGroup
+	var waitingMaster Locker
 
 	client := &sshClient{
-		config:        config,
-		sshCmd:        sshCmd,
-		controlPath:   controlPath,
-		waitingMaster: &waitingMaster,
-		onReady:       func() {},
-		logger:        NullLogger{},
+		config:      config,
+		sshCmd:      sshCmd,
+		controlPath: controlPath,
+		masterReady: &waitingMaster,
+		logger:      NullLogger{},
 	}
 
-	client.waitingMaster.Add(1)
+	client.masterReady.Lock()
 	go client.keepMasterConnection()
 
 	return client
 }
 func (client *sshClient) Close() error {
 	client.done = true
-	var err error
-	if client.listener != nil { err = (*client.listener).Close() }
 	client.closeMaster()
 	_ = os.Remove(client.controlPath)
-	return err
+	return nil
 }
 func (client *sshClient) Upload(filenames []string) bool {
 	return client.runCommand(
@@ -149,11 +155,19 @@ func (client *sshClient) Move(from string, to string) bool {
 		wrapApostrophe(to),
 	))
 }
+func (client *sshClient) Ready() *Locker {
+	return client.masterReady
+}
+func (client *sshClient) SetLogger(logger Logger) {
+	client.logger = logger
+}
 func (client *sshClient) keepMasterConnection() {
 	client.closeMaster()
-	for {
-		fmt.Print("Establishing SSH Master connection... ")
 
+	for {
+		fmt.Print("Establishing SSH Master connection... ") // MAYBE: stopwatch
+
+		// MAYBE: check if it doesn't hang on server after disconnection
 		client.runCommand(
 			fmt.Sprintf(
 				"%s -o ServerAliveInterval=%d -o ServerAliveCountMax=1 -M %s 'echo done && sleep infinity'",
@@ -164,13 +178,13 @@ func (client *sshClient) keepMasterConnection() {
 			func(out string) {
 				fmt.Println(out)
 				client.logger.Debug("master ready")
-				client.waitingMaster.DoneAll() // MAYBE: ensure this happens only once
+				client.masterReady.Unlock() // MAYBE: ensure this happens only once
 			},
 		)
 
+		client.masterReady.Lock()
 		client.closeMaster()
 		if client.done { break }
-		client.waitingMaster.Add(1)
 		time.Sleep(time.Duration(client.config.connTimeout) * time.Second)
 	}
 }
@@ -366,7 +380,37 @@ func parseArguments() Config {
 	}
 }
 
-func (client *sshClient) Run() {
+type SSHMirror struct {
+	io.Closer
+	LoggerAware
+	root     string
+	listener Listener
+	remote   RemoteClient
+	logger   Logger
+	onReady  func() // only for test
+}
+func (SSHMirror) New(config Config) *SSHMirror {
+	return &SSHMirror{
+		root:     config.localDir,
+		listener: FsnotifyListener{}.New(config.localDir, ignored),
+		remote:   sshClient{}.New(config),
+		logger:   NullLogger{},
+		onReady:  func() {},
+	}
+}
+func (client *SSHMirror) Close() error {
+	err1 := client.listener.Close()
+	err2 := client.remote.Close()
+
+	if err1 != nil { return err1 }
+	if err2 != nil { return err2 }
+	return nil
+}
+func (client *SSHMirror) SetLogger(logger Logger) {
+	client.logger = logger
+	client.remote.SetLogger(logger)
+}
+func (client *SSHMirror) Run() {
 	queue := ModificationsQueue{}
 	var syncing sync.Mutex
 	var cancelFirst *context.CancelFunc
@@ -380,17 +424,14 @@ func (client *sshClient) Run() {
 		os.Exit(0)
 	}()
 
-	listener := FsnotifyListener{}.New(client.config.localDir, ignored)
-	client.listener = &listener
-
-	client.waitingMaster.Wait()
-	client.logger.Debug("master ready")
+	client.remote.Ready().Wait()
+	client.logger.Debug("remote client initialized")
 
 	doSync := func() {
 		syncing.Lock()
 		defer syncing.Unlock()
 
-		client.waitingMaster.Wait()
+		client.remote.Ready().Wait()
 
 		if cancelFirst != nil {
 			(*cancelFirst)()
@@ -406,12 +447,12 @@ func (client *sshClient) Run() {
 			return
 		}
 
-		if uploadingModificationsQueue, err := queue.Flush(client.config.localDir); err == nil {
-			uploadingModificationsQueue.Apply(client) // MAYBE: swap
+		if uploadingModificationsQueue, err := queue.Flush(client.root); err == nil {
+			uploadingModificationsQueue.Apply(client.remote) // MAYBE: swap
 		} else {
 			client.logger.Error(err.Error())
 			client.logger.Error("Applying fallback algorithm")
-			syncFiles(client, client.config.localDir, listener.Fallback())
+			syncFiles(client.remote, client.root, client.listener.Fallback())
 		}
 
 		if queue.IsEmpty() { client.onReady() }
@@ -430,7 +471,7 @@ func (client *sshClient) Run() {
 	}
 
 	select {
-		case modification, ok := <-listener.Modifications():
+		case modification, ok := <-client.listener.Modifications():
 			if !ok { panic("modifications channel closed") }
 			modificationReceived(modification)
 		default:
@@ -439,7 +480,7 @@ func (client *sshClient) Run() {
 
 	for {
 		select {
-			case modification, ok := <-listener.Modifications():
+			case modification, ok := <-client.listener.Modifications():
 				if !ok { return } // TODO: make sure previous (running) modifications are uploaded
 				modificationReceived(modification)
 		}
@@ -447,5 +488,5 @@ func (client *sshClient) Run() {
 }
 
 func main() {
-	sshClient{}.New(parseArguments()).Run()
+	SSHMirror{}.New(parseArguments()).Run()
 }

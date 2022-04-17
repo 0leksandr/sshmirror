@@ -7,13 +7,17 @@ import (
 	"time"
 )
 
-type LoggerInterface interface {
+type Logger interface {
 	Debug(string, ...interface{})
 	Error(string)
 }
 
+type LoggerAware interface {
+	SetLogger(Logger)
+}
+
 type InMemoryLogger struct {
-	LoggerInterface
+	Logger
 	logs       []string
 	timestamps bool
 	mutex      sync.Mutex
@@ -58,7 +62,7 @@ func (logger *InMemoryLogger) log(text string) {
 }
 
 type NullLogger struct {
-	LoggerInterface
+	Logger
 }
 func (logger NullLogger) Debug(string, ...interface{}) {
 }

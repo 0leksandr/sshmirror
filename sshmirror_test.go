@@ -17,7 +17,7 @@ import (
 
 // TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
 // MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
-// MAYBE: test file `--`
+// MAYBE: test tricky filenames: `--`, `.`, `..`, `*`
 // MAYBE: test ignored
 // MAYBE: duplicate filenames in master chains
 
@@ -592,7 +592,7 @@ func TestIntegration(t *testing.T) {
 
 			logger := loggers[processId - 1]
 
-			var syncing CountableWaitGroup
+			var syncing Locker
 			SUTsDone.Add(1)
 			if testConfig.IntegrationTest {
 				command := exec.Command(
@@ -610,17 +610,17 @@ func TestIntegration(t *testing.T) {
 				}()
 				Must(command.Start())
 			} else {
-				client := sshClient{}.New(Config{
+				client := SSHMirror{}.New(Config{
 					localDir:     localTarget,
 					remoteHost:   testConfig.RemoteAddress,
 					remoteDir:    remoteTarget,
 					identityFile: testConfig.IdentityFile,
 					connTimeout:  testConfig.TimeoutSeconds,
 				})
-				client.logger = logger
+				client.SetLogger(logger)
 				client.onReady = func() {
 					client.logger.Debug("client.onReady")
-					syncing.DoneAll()
+					syncing.Unlock()
 				}
 				go client.Run()
 				defer func() {
@@ -709,7 +709,7 @@ func TestIntegration(t *testing.T) {
 					logger.Debug("command.before", command)
 
 					if command != "" {
-						if !testConfig.IntegrationTest { syncing.Add(1) }
+						if !testConfig.IntegrationTest { syncing.Lock() }
 
 						my.RunCommand(
 							localSandbox,
@@ -725,7 +725,7 @@ func TestIntegration(t *testing.T) {
 					logger.Debug("command.after", command)
 
 					if command != "" && command != FsnotifyCleanup {
-						if !testConfig.IntegrationTest { syncing.Add(1) }
+						if !testConfig.IntegrationTest { syncing.Lock() }
 
 						my.RunCommand(
 							localSandbox,
