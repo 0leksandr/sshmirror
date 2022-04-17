@@ -127,7 +127,7 @@ func (client *sshClient) Close() error {
 func (client *sshClient) Upload(filenames []string) bool {
 	return client.runCommand(
 		fmt.Sprintf(
-			"rsync -azER -e '%s' -- %s %s:%s > /dev/null",
+			"rsync -azER -e '%s' -- %s %s:%s",
 			client.sshCmd,
 			strings.Join(escapeFilenames(filenames), " "),
 			client.config.remoteHost,
@@ -369,7 +369,6 @@ func parseArguments() Config {
 func (client *sshClient) Run() {
 	queue := ModificationsQueue{}
 	var syncing sync.Mutex
-	var queueMx sync.Mutex
 	var cancelFirst *context.CancelFunc
 	var cancelLast *context.CancelFunc
 
@@ -407,14 +406,9 @@ func (client *sshClient) Run() {
 			return
 		}
 
-		queueMx.Lock()
-		if err := queue.Optimize(client.config.localDir); err == nil { // MAYBE: return optimized, and put mutex inside queue
-			queueCopy := queue.Copy()
-			queue = ModificationsQueue{}
-			queueMx.Unlock()
-			queueCopy.Apply(client) // TODO: swap
+		if uploadingModificationsQueue, err := queue.Flush(client.config.localDir); err == nil {
+			uploadingModificationsQueue.Apply(client) // MAYBE: swap
 		} else {
-			queueMx.Unlock()
 			client.logger.Error(err.Error())
 			client.logger.Error("Applying fallback algorithm")
 			syncFiles(client, client.config.localDir, listener.Fallback())
@@ -425,8 +419,7 @@ func (client *sshClient) Run() {
 
 	modificationReceived := func(modification Modification) {
 		client.logger.Debug("modification received", modification)
-		queueMx.Lock()
-		if err := queue.Add(modification); err == nil {
+		if err := queue.AtomicAdd(modification); err == nil {
 			if cancelFirst == nil { cancelFirst = cancellableTimer(5 * time.Second, doSync) }
 			if cancelLast != nil { (*cancelLast)() }
 			cancelLast = cancellableTimer(500 * time.Millisecond, doSync)
@@ -434,7 +427,6 @@ func (client *sshClient) Run() {
 			client.logger.Error(err.Error())
 			// TODO: fallback
 		}
-		queueMx.Unlock()
 	}
 
 	select {

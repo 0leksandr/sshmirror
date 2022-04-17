@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"sync"
 )
 
 type Modification interface {
@@ -120,6 +121,14 @@ type ModificationsQueue struct { // TODO: atomic
 	updated []Updated
 	deleted []Deleted
 	moved   []Moved
+	mutex   sync.Mutex
+}
+
+func (queue *ModificationsQueue) AtomicAdd(modification Modification) error {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+
+	return queue.Add(modification)
 }
 func (queue *ModificationsQueue) Add(modification Modification) error {
 	return modification.Join(queue)
@@ -136,24 +145,33 @@ func (queue *ModificationsQueue) HasModifications(filename string) bool {
 	}
 	return false
 }
-func (queue *ModificationsQueue) Apply(client RemoteClient) {
-	if len(queue.deleted) > 0 {
-		deletedFilenames := make([]string, 0, len(queue.deleted))
-		for _, deleted := range queue.deleted { deletedFilenames = append(deletedFilenames, deleted.filename) }
-		client.Delete(deletedFilenames)
-	}
+func (queue *ModificationsQueue) IsEmpty() bool {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
 
-	for _, moved := range queue.moved {
-		client.Move(moved.from, moved.to)
-	}
+	return len(queue.updated) == 0 &&
+		len(queue.deleted) == 0 &&
+		len(queue.moved) == 0
+}
+func (queue *ModificationsQueue) Flush(localDir string) (UploadingModificationsQueue, error) {
+	queue.mutex.Lock()
+	queueCopy := queue.copy()
+	queue.updated = []Updated{}
+	queue.deleted = []Deleted{}
+	queue.moved = []Moved{}
+	queue.mutex.Unlock()
 
-	if len(queue.updated) > 0 {
-		updatedFilenames := make([]string, 0, len(queue.updated))
-		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
-		client.Upload(updatedFilenames)
+	if err := queueCopy.optimize(localDir); err == nil {
+		return UploadingModificationsQueue{
+			updated: queueCopy.updated,
+			deleted: queueCopy.deleted,
+			moved:   queueCopy.moved,
+		}, nil
+	} else {
+		return UploadingModificationsQueue{}, err
 	}
 }
-func (queue *ModificationsQueue) Copy() ModificationsQueue {
+func (queue *ModificationsQueue) copy() ModificationsQueue {
 	updated := make([]Updated, len(queue.updated))
 	deleted := make([]Deleted, len(queue.deleted))
 	moved := make([]Moved, len(queue.moved))
@@ -167,7 +185,7 @@ func (queue *ModificationsQueue) Copy() ModificationsQueue {
 		moved:   moved,
 	}
 }
-func (queue *ModificationsQueue) Optimize(localDir string) error {
+func (queue *ModificationsQueue) optimize(localDir string) error {
 	// check for circular move
 	removedCircular := true
 	for removedCircular {
@@ -220,11 +238,6 @@ func (queue *ModificationsQueue) Optimize(localDir string) error {
 
 	return nil
 }
-func (queue *ModificationsQueue) IsEmpty() bool {
-	return len(queue.updated) == 0 &&
-		len(queue.deleted) == 0 &&
-		len(queue.moved) == 0
-}
 func (queue *ModificationsQueue) removeUpdated(i int) {
 	last := len(queue.updated) - 1
 	if i != last { queue.updated[i] = queue.updated[last] }
@@ -239,4 +252,27 @@ func (queue *ModificationsQueue) removeMoved(i int) {
 	last := len(queue.moved) - 1
 	if i != last { queue.moved[i] = queue.moved[last] }
 	queue.moved = queue.moved[:last]
+}
+
+type UploadingModificationsQueue struct {
+	updated []Updated
+	deleted []Deleted
+	moved   []Moved
+}
+func (queue UploadingModificationsQueue) Apply(client RemoteClient) {
+	if len(queue.deleted) > 0 {
+		deletedFilenames := make([]string, 0, len(queue.deleted))
+		for _, deleted := range queue.deleted { deletedFilenames = append(deletedFilenames, deleted.filename) }
+		client.Delete(deletedFilenames)
+	}
+
+	for _, moved := range queue.moved {
+		client.Move(moved.from, moved.to)
+	}
+
+	if len(queue.updated) > 0 {
+		updatedFilenames := make([]string, 0, len(queue.updated))
+		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
+		client.Upload(updatedFilenames)
+	}
 }

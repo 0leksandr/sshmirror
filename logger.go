@@ -53,7 +53,8 @@ func (logger *InMemoryLogger) log(text string) {
 		default:             log = "[INVALID TRACE]"
 	}
 	if logger.timestamps { log += ": " + time.Now().String() }
-	logger.logs = append(logger.logs, log + "\n" + text)
+	log += "\n" + text
+	logger.logs = append(logger.logs, log)
 }
 
 type NullLogger struct {
