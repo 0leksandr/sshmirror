@@ -15,22 +15,26 @@ import (
 	"time"
 )
 
+// TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
+// MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
 // MAYBE: test file `--`
 // MAYBE: test ignored
 // MAYBE: duplicate filenames in master chains
 
-var delaysBasic = []float32{
-	0,
+var delaysBasic = [...]float32{ // TODO: non-constant delays (pseudo-random pauses)
+	0.,
 	0.1,
 	0.6,
 }
-var delaysMaster = []float32{
-	0,
+var delaysMaster = [...]float32{
+	0.,
 	0.1,
 	0.4,
 	0.6,
-	1,
+	1.,
 }
+
+const FsnotifyCleanup = "sleep 0.002" // TODO: remove with FsnotifyListener
 
 type TestFilename string
 func (filename TestFilename) escaped() string {
@@ -218,6 +222,7 @@ func basicModificationChains() []TestModificationChain {
 						remove(b),
 						move(b, cExt),
 					}},
+					TestSimpleModification{FsnotifyCleanup},
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(false)),
@@ -298,6 +303,7 @@ func basicModificationChains() []TestModificationChain {
 					TestSimpleModification{move(bExt, a)},
 					TestOptionalModification{write(a, 13)},
 					TestSimpleModification{move(a, cExt)},
+					TestSimpleModification{FsnotifyCleanup},
 				},
 			}
 		})(generateFilename(true), generateFilename(false), generateFilename(false)),
@@ -335,6 +341,29 @@ func basicModificationChains() []TestModificationChain {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
+			return TestModificationChain{
+				before: TestModificationsList{
+					TestVariantsModification{[]string{
+						create(a),
+						write(a, 10),
+					}},
+					TestVariantsModification{[]string{
+						create(b),
+						write(b, 11),
+					}},
+					TestVariantsModification{[]string{
+						create(c),
+						write(c, 12),
+					}},
+				},
+				after:  TestModificationsList{
+					TestSimpleModification{move(a, b)},
+					TestSimpleModification{move(b, c)},
+					TestSimpleModification{remove(c)},
+				},
+			}
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
 	}
 }
 func filenameModificationChains() []TestModificationChain {
@@ -346,7 +375,7 @@ func filenameModificationChains() []TestModificationChain {
 		"\\\\\\\\\\'",
 	}
 	filenames := make([]TestFilename, 0, len(apostrophes))
-	for i := 0; i < len(apostrophes)-1; i++ {
+	for i := 0; i <= len(apostrophes); i++ {
 		filenames = append(
 			filenames,
 			TestFilename("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗" + strings.Join(apostrophes[:i], "")),
@@ -361,7 +390,7 @@ func filenameModificationChains() []TestModificationChain {
 			return TestModificationChain{after: TestModificationsList{TestSimpleModification{write(filename, 10)}}}
 		},
 		func(filename TestFilename) TestModificationChain {
-			filename2 := filename + "2"
+			filename2 := filename + "$"
 			return TestModificationChain{
 				before: TestModificationsList{TestSimpleModification{create(filename2)}},
 				after: TestModificationsList{TestSimpleModification{move(filename2, filename)}},
@@ -534,13 +563,17 @@ func TestIntegration(t *testing.T) {
 	my.Dump(nrScenarios)
 
 	scenarios := make(chan TestScenario, nrScenarios)
-	if testConfig.Debug { my.Dump2(chains) }
 	for _, chain := range chains {
 		for _, scenario := range chain.scenarios() {
 			scenarios <- scenario
 		}
 	}
 	close(scenarios)
+
+	loggers := make([]*InMemoryLogger, 0, testConfig.NrThreads)
+	for i := 0; i < testConfig.NrThreads; i++ {
+		loggers = append(loggers, &InMemoryLogger{})
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(testConfig.NrThreads)
@@ -556,6 +589,8 @@ func TestIntegration(t *testing.T) {
 			mkdir := fmt.Sprintf("mkdir -p %s", targetDir)
 			my.RunCommand(sandbox, mkdir, nil, func(err string) { panic(err) })
 			executeRemote(testConfig.RemotePath, mkdir)
+
+			logger := loggers[processId - 1]
 
 			var syncing CountableWaitGroup
 			SUTsDone.Add(1)
@@ -575,14 +610,19 @@ func TestIntegration(t *testing.T) {
 				}()
 				Must(command.Start())
 			} else {
-				client := launchClient(Config{
+				client := sshClient{}.New(Config{
 					localDir:     localTarget,
 					remoteHost:   testConfig.RemoteAddress,
 					remoteDir:    remoteTarget,
 					identityFile: testConfig.IdentityFile,
 					connTimeout:  testConfig.TimeoutSeconds,
 				})
-				client.onReady = func() { syncing.DoneAll() }
+				client.logger = logger
+				client.onReady = func() {
+					client.logger.Debug("client.onReady")
+					syncing.DoneAll()
+				}
+				go client.Run()
 				defer func() {
 					Must(client.Close())
 					SUTsDone.Done()
@@ -602,10 +642,7 @@ func TestIntegration(t *testing.T) {
 					my.Dump(scenarioIdx)
 					scenarioIdx++ // MAYBE: atomic
 				})()
-				if testConfig.Debug {
-					my.Dump(processId)
-					my.Dump2(scenario)
-				}
+				logger.Debug("scenario", scenario)
 
 				check := func() {
 					localPath := localTarget
@@ -636,17 +673,15 @@ func TestIntegration(t *testing.T) {
 					if !reflect.DeepEqual([]string{localHash}, remoteHash) {
 						t.Error("hashes mismatch", localHash, remoteHash)
 
-						my.Dump(processId)
-						my.Dump2(scenario)
-						my.Dump(localHash)
-						my.Dump(remoteHash)
+						logger.Debug("check failed")
+						logger.Debug("processId", processId)
 						for _, cmd := range []string{
 							"find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha1sum",
 							"find . \\( -type f -o -type d \\) -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a'",
 							hashCmd,
+							"tree ../..",
 							"cat -- *",
 						} {
-							my.Dump(cmd)
 							local := make([]string, 0)
 							my.RunCommand(
 								localPath,
@@ -654,19 +689,24 @@ func TestIntegration(t *testing.T) {
 								func(out string) { local = append(local, out) },
 								func(err string) { panic(err) },
 							)
-							my.Dump2(local)
 							remote := executeRemote(remotePath, cmd)
-							my.Dump2(remote)
-							my.Dump(reflect.DeepEqual(local, remote))
+							logger.Debug("cmd", cmd)
+							logger.Debug("local", local)
+							logger.Debug("remote", remote)
+							logger.Debug("equal", reflect.DeepEqual(local, remote))
 						}
-						if testConfig.Debug { panic("test failed") }
+						if testConfig.Debug {
+							my.Dump("logs:")
+							logger.Print()
+							panic("test failed")
+						}
 					}
 				}
 
 				scenario.applyTarget(processId)
 
 				for _, command := range scenario.before {
-					if testConfig.Debug { my.Dump(command) }
+					logger.Debug("command.before", command)
 
 					if command != "" {
 						if !testConfig.IntegrationTest { syncing.Add(1) }
@@ -682,9 +722,9 @@ func TestIntegration(t *testing.T) {
 				awaitSync()
 
 				for _, command := range scenario.after {
-					if testConfig.Debug { my.Dump(command) }
+					logger.Debug("command.after", command)
 
-					if command != "" {
+					if command != "" && command != FsnotifyCleanup {
 						if !testConfig.IntegrationTest { syncing.Add(1) }
 
 						my.RunCommand(
@@ -698,6 +738,19 @@ func TestIntegration(t *testing.T) {
 				awaitSync()
 				check()
 				reset(remoteSandbox, localSandbox, false)
+			}
+			if testConfig.Debug {
+				loggers[processId-1] = nil
+				go func() {
+					time.Sleep(10 * time.Second)
+					for _, foreignLogger := range loggers {
+						if foreignLogger != nil {
+							my.Dump("open logs:")
+							foreignLogger.Print()
+							panic("test")
+						}
+					}
+				}()
 			}
 
 			wg.Done()
