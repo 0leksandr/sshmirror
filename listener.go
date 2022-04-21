@@ -1,29 +1,64 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"syscall"
 	"time"
 )
 
-type Listener interface {
+type Listener interface { // TODO: rename to `Watcher`
 	io.Closer
 	Modifications() <-chan Modification
 	Fallback() []string // MAYBE: rename; test
 }
 
-type FsnotifyListener struct {
+type ListenerFactory struct {
+	LoggerAware
+	logger Logger
+}
+func (ListenerFactory) New() ListenerFactory {
+	return ListenerFactory{
+		logger: NullLogger{},
+	}
+}
+func (factory ListenerFactory) SetLogger(logger Logger) {
+	factory.logger = logger
+}
+func (factory ListenerFactory) Get(root string, exclude string) Listener {
+	if inotify, err := (InotifyListener{}.New(root, exclude)); err == nil {
+		return inotify
+	} else {
+		Must(inotify.Close())
+		factory.logger.Error(err.Error())
+		factory.logger.Error(
+			"Warning! Current FS events provider: fsnotify. It has known problem of not tracking contents of " +
+				"subdirectories, created after program was started. It can only reliably track files in existing " +
+				"subdirectories",
+		)
+		return FsnotifyListener{}.New(root, exclude)
+	}
+}
+
+type FsnotifyListener struct { // TODO: watch new subdirectories!
 	Listener
+	io.Closer
 	modifications     chan Modification
 	modifiedFilenames []string // MAYBE: separate type for filenames
 	stopWatching      func()
 }
-func (FsnotifyListener) New(root string, ignored *regexp.Regexp) Listener {
+func (FsnotifyListener) New(root string, exclude string) Listener {
+	var ignored *regexp.Regexp
+	if exclude != "" { ignored = regexp.MustCompile(exclude) }
 	listener := FsnotifyListener{
 		modifications: make(chan Modification),
 	}
@@ -142,4 +177,148 @@ func (FsnotifyListener) watchDirRecursive(
 }
 func (listener *FsnotifyListener) put(modification Modification) { // MAYBE: remove
 	listener.modifications <- modification
+}
+
+type InotifyListener struct {
+	Listener
+	io.Closer
+	LoggerAware
+	modifications     chan Modification
+	inotifyProcess    *os.Process
+	modifiedFilenames []string
+	logger            Logger
+}
+func (InotifyListener) New(root string, exclude string) (Listener, error) {
+	listener := InotifyListener{
+		modifications: make(chan Modification), // MAYBE: reserve size
+		logger:        NullLogger{},
+	}
+
+	const CloseWrite = "CLOSE_WRITE"
+	const Delete = "DELETE"
+	const MovedFrom = "MOVED_FROM"
+	const MovedTo = "MOVED_TO"
+
+	args := []string{
+		"--monitor",
+		"--recursive",
+		"--format", "%w%f\t%e",
+		"--event", CloseWrite,
+		"--event", Delete,
+		"--event", MovedFrom,
+		"--event", MovedTo,
+	}
+	if exclude != "" {
+		args = append(args, "--exclude", exclude) // TODO: test
+	}
+	command := exec.Command("inotifywait", append(args, "--", root)...)
+
+	type Event struct {
+		eventType string // MAYBE: tinyint
+		filename  string
+	}
+	events := make(chan Event) // MAYBE: reserve size
+
+	stdout, err1 := command.StdoutPipe()
+	PanicIf(err1)
+	stdoutScanner := bufio.NewScanner(stdout)
+	go func() { // stdout to events
+		for stdoutScanner.Scan() {
+			line := stdoutScanner.Text()
+			listener.logger.Debug("inotify.line", line)
+			reg := regexp.MustCompile(fmt.Sprintf("^%s/(.+)\t([^\t]+)$", root)) // TODO: strip trail slash
+			parts := reg.FindStringSubmatch(line)
+			filename := parts[1]
+			eventsStr := parts[2]
+			eventType, err := func() (string, error) {
+				for _, eventType := range strings.Split(eventsStr, ",") {
+					for _, knownType := range []string{
+						CloseWrite,
+						Delete,
+						MovedFrom,
+						MovedTo,
+					}{
+						if eventType == knownType { return eventType, nil }
+					}
+				}
+				return "", errors.New("unknown event: " + eventsStr)
+			}()
+			if err == nil {
+				events <- Event{
+					eventType: eventType,
+					filename:  filename,
+				}
+			} else {
+				listener.logger.Error(err.Error())
+			}
+		}
+
+		close(events)
+	}()
+
+	put := func(modification Modification) { listener.modifications <- modification }
+	var processEvent func(Event)
+	processEvent = func(event Event) {
+		listener.logger.Debug("event", event)
+		filename := event.filename
+		switch event.eventType {
+			case CloseWrite: put(Updated{filename})
+			case Delete: put(Deleted{filename})
+			case MovedFrom:
+				putDefault := func() { put(Deleted{filename}) }
+				select {
+					case nextEvent, ok := <- events:
+						if ok {
+							if nextEvent.eventType == MovedTo {
+								put(Moved{
+									from: filename,
+									to:   nextEvent.filename,
+								})
+							} else {
+								putDefault()
+								processEvent(nextEvent)
+							}
+						} else {
+							putDefault()
+						}
+					case <-time.After(2 * time.Millisecond): // MAYBE: tweak
+						putDefault()
+					// MAYBE: listen for exit
+				}
+			case MovedTo: put(Updated{filename})
+		}
+
+		listener.modifiedFilenames = append(listener.modifiedFilenames, filename)
+	}
+	go func() { // events to modifications
+		for {
+			select {
+				case event, ok := <-events:
+					if ok {
+						processEvent(event)
+					} else {
+						close(listener.modifications)
+						return
+					}
+			}
+		}
+	}()
+
+	err := command.Start()
+	listener.inotifyProcess = command.Process
+
+	// TODO: read error/info stream, await for watches to establish
+	// TODO: calculate and check nr of files to be watched, see https://www.baeldung.com/linux/inotify-upper-limit-reached
+	return &listener, err
+}
+func (listener *InotifyListener) Close() error {
+	return listener.inotifyProcess.Signal(syscall.SIGTERM)
+}
+func (listener *InotifyListener) Modifications() <-chan Modification {
+	return listener.modifications
+}
+func (listener *InotifyListener) Fallback() []string {
+	modifiedFilenames := listener.modifiedFilenames
+	listener.modifiedFilenames = []string{}
+	return modifiedFilenames
 }

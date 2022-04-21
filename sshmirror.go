@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,17 +18,18 @@ import (
 )
 
 // TODO: upload directories on initial sync
+// TODO: timeout sync operations
 // TODO: re-sync with timeout on error
 // TODO: ignore special types of files (pipes, block devices etc.)
-// TODO: support symlinks
 // TODO: support directories
 // TODO: support scp without rsync
-// MAYBE: use `inotifywait` instead of `fsnotify`, and get rid of movement troubles
+// MAYBE: support symlinks
 // MAYBE: automatically adjust timeout based on server response rate
-// MAYBE: move multiple at once with one command (but preserve order of "chained" movements)
+// MAYBE: multiple files movements with one command (but preserve order of "chained" movements)
 // MAYBE: copy permissions
 // MAYBE: copy files metadata (creation time etc.)
 // MAYBE: upload new files with scp
+// MAYBE: test that all interfaces are correctly implemented
 
 var Must = my.Must
 var PanicIf = my.PanicIf
@@ -71,13 +71,20 @@ type Config struct {
 	identityFile string
 	connTimeout  int
 	verbosity    int
-	ignored      *regexp.Regexp
+	exclude      string
+	errorCmd     string
 }
 func (Config) ParseArguments() Config {
 	identityFile := flag.String("i", "", "identity file (rsa)")
 	connTimeout  := flag.Int("t", 5, "connection timeout (seconds)")
 	verbosity    := flag.Int("v", 2, "verbosity level (0-3)")
 	exclude      := flag.String("e", "", "exclude pattern (regexp, f.e. '^\\.git/')")
+	errorCmd     := flag.String(
+		"error-cmd",
+		"",
+		"command, that will be called when errors occur. Text of an error will be passed to it as the last " +
+			"argument",
+	)
 
 	flag.Parse()
 
@@ -91,13 +98,6 @@ func (Config) ParseArguments() Config {
 				"  DESTINATION - remote directory (absolute path)]",
 		)
 		os.Exit(1)
-	}
-
-	var ignored *regexp.Regexp
-	if *exclude != "" {
-		var err error
-		ignored, err = regexp.Compile(*exclude)
-		PanicIf(err)
 	}
 
 	stripTrailSlash := func(path string) string {
@@ -123,7 +123,8 @@ func (Config) ParseArguments() Config {
 		identityFile: *identityFile,
 		connTimeout:  *connTimeout,
 		verbosity:    *verbosity,
-		ignored:      ignored,
+		exclude:      *exclude,
+		errorCmd:     *errorCmd,
 	}
 }
 
@@ -320,11 +321,26 @@ type SSHMirror struct {
 	onReady  func() // only for test
 }
 func (SSHMirror) New(config Config) *SSHMirror {
+	errorLogger := func() ErrorLogger {
+		if config.errorCmd != "" {
+			return ErrorCmdLogger{errorCmd: config.errorCmd}
+		} else {
+			return StdErrLogger{}
+		}
+	}()
+	logger := NullLogger{errorLogger: errorLogger}
+
+	listenerFactory := ListenerFactory{}.New()
+	listenerFactory.SetLogger(logger)
+
+	remoteManager := RemoteManager{}.New(config)
+	remoteManager.SetLogger(logger)
+
 	return &SSHMirror{
 		root:     config.localDir,
-		listener: FsnotifyListener{}.New(config.localDir, config.ignored),
-		remote:   RemoteManager{}.New(config),
-		logger:   NullLogger{},
+		listener: listenerFactory.Get(config.localDir, config.exclude),
+		remote:   remoteManager,
+		logger:   logger,
 		onReady:  func() {},
 	}
 }
@@ -373,12 +389,14 @@ func (client *SSHMirror) Run() {
 		}
 
 		if queue.IsEmpty() {
-			client.logger.Error("Empty queue")
+			client.logger.Error("Empty queue") // TODO: fix
 			return
 		}
 
 		if uploadingModificationsQueue, err := queue.Flush(client.root); err == nil {
-			if not := client.remote.Sync(uploadingModificationsQueue); not != nil {
+			if err2 := client.remote.Sync(uploadingModificationsQueue); err2 != nil {
+				client.logger.Error(err2.Error())
+				client.logger.Error("Applying fallback algorithm")
 				client.remote.FallbackQueue(uploadingModificationsQueue)
 			}
 		} else {

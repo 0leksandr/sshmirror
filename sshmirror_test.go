@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/0leksandr/my.go"
 	"io/ioutil"
@@ -16,6 +18,7 @@ import (
 )
 
 // TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
+// TODO: test tabs, zero-symbols and others in filenames
 // MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
 // MAYBE: test tricky filenames: `--`, `.`, `..`, `*`, `:`
 // MAYBE: test ignored
@@ -35,7 +38,7 @@ var delaysMaster = [...]float32{
 	1.,
 }
 
-const FsnotifyCleanup = "sleep 0.002" // TODO: remove with FsnotifyListener
+const MovementCleanup = "sleep 0.003" // MAYBE: come up with something better
 
 type TestFilename string
 func (filename TestFilename) escaped() string {
@@ -223,7 +226,7 @@ func basicModificationChains() []TestModificationChain {
 						remove(b),
 						move(b, cExt),
 					}},
-					TestSimpleModification{FsnotifyCleanup},
+					TestSimpleModification{MovementCleanup},
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(false)),
@@ -304,7 +307,7 @@ func basicModificationChains() []TestModificationChain {
 					TestSimpleModification{move(bExt, a)},
 					TestOptionalModification{write(a, 13)},
 					TestSimpleModification{move(a, cExt)},
-					TestSimpleModification{FsnotifyCleanup},
+					TestSimpleModification{MovementCleanup},
 				},
 			}
 		})(generateFilename(true), generateFilename(false), generateFilename(false)),
@@ -457,36 +460,63 @@ func modificationChains() []TestModificationChain {
 }
 
 type TestConfig struct {
-	IdentityFile    string
-	RemoteAddress   string
-	RemotePath      string
-	TimeoutSeconds  int
-	NrThreads       int
-	Debug           bool
-	IntegrationTest bool
+	IdentityFile     string
+	RemoteAddress    string
+	RemotePath       string
+	TimeoutSeconds   int
+	NrThreads        int
+	ErrorCmd         string
+	LastDelaySeconds int
+	StopOnFail       bool
+	IntegrationTest  bool
 }
-func (config TestConfig) IsSet() bool {
+func (TestConfig) New(filename string) TestConfig {
+	configFile, err := os.Open(filename)
+	PanicIf(err)
+	defer func() { Must(configFile.Close()) }()
+	testConfig := TestConfig{}
+	Must(json.NewDecoder(configFile).Decode(&testConfig))
+
+	fileContent, err := ioutil.ReadFile(filename)
+	PanicIf(err)
+	Must(testConfig.check(fileContent))
+
+	return testConfig
+}
+func (config TestConfig) check(originalContent []byte) error {
 	value := reflect.ValueOf(config)
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
-		if field.Kind() != reflect.Bool {
-			if reflect.New(field.Type()).Elem().Interface() == field.Interface() { return false }
+		fieldName := value.Type().Field(i).Name
+		allowEmpty := field.Kind() == reflect.Bool || fieldName == "ErrorCmd" || fieldName == "LastDelaySeconds"
+		if !allowEmpty && reflect.New(field.Type()).Elem().Interface() == field.Interface() {
+			return errors.New(fmt.Sprintf("field %s is empty", fieldName))
 		}
 	}
-	return true
+
+	buffer := &bytes.Buffer{}
+	if err := json.NewEncoder(buffer).Encode(config); err != nil { return err }
+	replaceBlanks := func(text []byte) []byte { // MAYBE: something smarter
+		for from, to := range map[string][]byte{
+			"\\n *": {},
+			"\": +": []byte("\":"),
+		} {
+			text = regexp.MustCompile(from).ReplaceAll(text, to)
+		}
+		return text
+	}
+	if !bytes.Equal(replaceBlanks(originalContent), replaceBlanks(buffer.Bytes())) {
+		return errors.New("some fields are missing")
+	}
+
+	return nil
 }
 
 func TestIntegration(t *testing.T) {
 	currentDir, err := os.Getwd()
 	PanicIf(err)
 	sandbox := fmt.Sprintf("%s/sandbox", currentDir)
-
-	configFile, err := os.Open(fmt.Sprintf("%s/test-config.json", currentDir))
-	PanicIf(err)
-	defer func() { Must(configFile.Close()) }()
-	testConfig := TestConfig{}
-	Must(json.NewDecoder(configFile).Decode(&testConfig))
-	if !testConfig.IsSet() { panic("config is not set") }
+	testConfig := TestConfig{}.New(fmt.Sprintf("%s/test-config.json", currentDir))
 
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-test-")
 	PanicIf(err)
@@ -573,7 +603,18 @@ func TestIntegration(t *testing.T) {
 
 	loggers := make([]*InMemoryLogger, 0, testConfig.NrThreads)
 	for i := 0; i < testConfig.NrThreads; i++ {
-		loggers = append(loggers, &InMemoryLogger{})
+		loggers = append(loggers, &InMemoryLogger{
+			timestamps: true,
+			errorLogger: (func() ErrorLogger {
+				if testConfig.ErrorCmd != "" {
+					return ErrorCmdLogger{
+						errorCmd: testConfig.ErrorCmd,
+					}
+				} else {
+					return StdErrLogger{}
+				}
+			})(),
+		})
 	}
 
 	var wg sync.WaitGroup
@@ -617,8 +658,6 @@ func TestIntegration(t *testing.T) {
 					remoteDir:    remoteTarget,
 					identityFile: testConfig.IdentityFile,
 					connTimeout:  testConfig.TimeoutSeconds,
-					verbosity:    0,
-					ignored:      nil,
 				})
 				client.SetLogger(logger)
 				client.onReady = func() {
@@ -698,7 +737,7 @@ func TestIntegration(t *testing.T) {
 							logger.Debug("remote", remote)
 							logger.Debug("equal", reflect.DeepEqual(local, remote))
 						}
-						if testConfig.Debug {
+						if testConfig.StopOnFail {
 							my.Dump("logs:")
 							logger.Print()
 							panic("test failed")
@@ -727,7 +766,7 @@ func TestIntegration(t *testing.T) {
 				for _, command := range scenario.after {
 					logger.Debug("command.after", command)
 
-					if command != "" && command != FsnotifyCleanup {
+					if command != "" && command != MovementCleanup {
 						if !testConfig.IntegrationTest { syncing.Lock() }
 
 						my.RunCommand(
@@ -742,10 +781,10 @@ func TestIntegration(t *testing.T) {
 				check()
 				reset(remoteSandbox, localSandbox, false)
 			}
-			if testConfig.Debug {
+			if testConfig.LastDelaySeconds != 0 {
 				loggers[processId-1] = nil
 				go func() {
-					time.Sleep(10 * time.Second)
+					time.Sleep(time.Duration(testConfig.LastDelaySeconds) * time.Second)
 					for _, foreignLogger := range loggers {
 						if foreignLogger != nil {
 							my.Dump("open logs:")

@@ -7,20 +7,36 @@ import (
 	"time"
 )
 
-type Logger interface {
-	Debug(string, ...interface{})
+type ErrorLogger interface {
 	Error(string)
 }
 
-type LoggerAware interface {
-	SetLogger(Logger)
+type StdErrLogger struct {
+	ErrorLogger
+}
+func (logger StdErrLogger) Error(err string) {
+	my.WriteToStderr(err)
+}
+
+type ErrorCmdLogger struct {
+	ErrorLogger
+	errorCmd string
+}
+func (logger ErrorCmdLogger) Error(err string) {
+	my.RunCommand("", logger.errorCmd + " " + err, nil, nil)
+}
+
+type Logger interface {
+	ErrorLogger
+	Debug(string, ...interface{})
 }
 
 type InMemoryLogger struct {
 	Logger
-	logs       []string
-	timestamps bool
-	mutex      sync.Mutex
+	logs        []string
+	timestamps  bool
+	mutex       sync.Mutex
+	errorLogger ErrorLogger
 }
 func (logger *InMemoryLogger) Debug(message string, values ...interface{}) {
 	switch len(values) {
@@ -39,7 +55,7 @@ func (logger *InMemoryLogger) Debug(message string, values ...interface{}) {
 }
 func (logger *InMemoryLogger) Error(err string) {
 	logger.log("Error: " + err)
-	my.WriteToStderr(err)
+	logger.errorLogger.Error(err)
 }
 func (logger *InMemoryLogger) Print() {
 	logger.mutex.Lock()
@@ -49,13 +65,7 @@ func (logger *InMemoryLogger) Print() {
 	logger.mutex.Unlock()
 }
 func (logger *InMemoryLogger) log(text string) {
-	var log string
-	trace := my.Trace(false)
-	switch true {
-		case len(trace) > 2: log = trace[2]
-		case len(trace) > 0: log = trace[len(trace)-1]
-		default:             log = "[INVALID TRACE]"
-	}
+	log := my.Trace(false)[2]
 	if logger.timestamps { log += ": " + time.Now().String() }
 	log += "\n" + text
 	logger.logs = append(logger.logs, log)
@@ -63,9 +73,13 @@ func (logger *InMemoryLogger) log(text string) {
 
 type NullLogger struct {
 	Logger
+	errorLogger ErrorLogger
 }
-func (logger NullLogger) Debug(string, ...interface{}) {
-}
+func (logger NullLogger) Debug(string, ...interface{}) {}
 func (logger NullLogger) Error(err string) {
-	my.WriteToStderr(err)
+	logger.errorLogger.Error(err)
+}
+
+type LoggerAware interface {
+	SetLogger(Logger)
 }

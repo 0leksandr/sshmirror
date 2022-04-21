@@ -146,7 +146,9 @@ func (client *sshClient) runCommand(command string, onStdout func(string)) bool 
 		client.config.localDir,
 		command,
 		onStdout,
-		client.logger.Error,
+		func(err string) {
+			client.logger.Error(fmt.Sprintf("command: %s; error: %s", command, err))
+		},
 	)
 }
 func (client *sshClient) runRemoteCommand(command string) bool {
