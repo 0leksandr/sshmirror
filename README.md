@@ -46,7 +46,6 @@ Basic usage scenario - local development with constant uploading to remote serve
   - last modification was made 0.5sec ago
   - first modification was made 5sec ago, and since then new modifications occur constantly (without break for 0.5sec)
 - using `ssh` "Master connection" feature to keep one constant connection. Thus, once-in-a-while uploads do not need to establish connection over again
-- filesystem events (modifications) tracked by `fsnotify`. Credits: https://github.com/fsnotify/fsnotify
 
 ---
 

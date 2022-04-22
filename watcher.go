@@ -21,6 +21,7 @@ import (
 type Watcher interface {
 	io.Closer
 	Modifications() <-chan Modification
+	Name() string
 }
 
 type FsnotifyWatcher struct { // PRIORITY: watch new subdirectories
@@ -87,6 +88,9 @@ func (FsnotifyWatcher) New(root string, exclude string) Watcher {
 	}()
 
 	return &watcher
+}
+func (FsnotifyWatcher) Name() string {
+	return "fsnotify"
 }
 func (watcher *FsnotifyWatcher) Close() error {
 	watcher.stopWatching()
@@ -292,6 +296,9 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 
 	// TODO: read error/info stream, await for watches to establish
 	return &watcher, errCommandStart
+}
+func (InotifyWatcher) Name() string {
+	return "inotify"
 }
 func (watcher *InotifyWatcher) Close() error {
 	return watcher.onClose()

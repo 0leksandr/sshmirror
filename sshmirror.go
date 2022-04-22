@@ -73,6 +73,7 @@ type Config struct {
 	verbosity    int
 	exclude      string
 	errorCmd     string
+	watcher      string
 }
 func (Config) ParseArguments() Config {
 	identityFile := flag.String("i", "", "identity file (rsa)")
@@ -84,6 +85,11 @@ func (Config) ParseArguments() Config {
 		"",
 		"command, that will be called when errors occur. Text of an error will be passed to it as the last " +
 			"argument",
+	)
+	watcher := flag.String(
+		"watcher",
+		"",
+		fmt.Sprintf("FS watcher. Available values: %s, %s", InotifyWatcher{}.Name(), FsnotifyWatcher{}.Name()),
 	)
 
 	flag.Parse()
@@ -120,6 +126,7 @@ func (Config) ParseArguments() Config {
 		verbosity:    *verbosity,
 		exclude:      *exclude,
 		errorCmd:     *errorCmd,
+		watcher:      *watcher,
 	}
 }
 
@@ -331,17 +338,26 @@ func (SSHMirror) New(config Config) *SSHMirror {
 	logger := NullLogger{errorLogger: errorLogger}
 
 	watcher := (func() Watcher {
-		if inotify, err := (InotifyWatcher{}.New(config.localDir, config.exclude, logger)); err == nil {
-			return inotify
-		} else {
-			Must(inotify.Close())
-			logger.Error(err.Error())
-			logger.Error(
-				"Warning! Current FS events provider: fsnotify. It has known problem of not tracking contents of " +
-					"subdirectories, created after program was started. It can only reliably track files in existing " +
-					"subdirectories",
-			)
-			return FsnotifyWatcher{}.New(config.localDir, config.exclude)
+		switch config.watcher {
+			case InotifyWatcher{}.Name():
+				inotify, err := InotifyWatcher{}.New(config.localDir, config.exclude, logger)
+				PanicIf(err)
+				return inotify
+			case FsnotifyWatcher{}.Name():
+				return FsnotifyWatcher{}.New(config.localDir, config.exclude)
+			default:
+				if inotify, err := (InotifyWatcher{}.New(config.localDir, config.exclude, logger)); err == nil {
+					return inotify
+				} else {
+					Must(inotify.Close())
+					logger.Error(err.Error())
+					logger.Error(
+						"Warning! Current FS events provider: fsnotify. It has known problem of not tracking " +
+							"contents of subdirectories, created after program was started. It can only reliably " +
+							"track files in existing subdirectories",
+					)
+					return FsnotifyWatcher{}.New(config.localDir, config.exclude)
+				}
 		}
 	})()
 
