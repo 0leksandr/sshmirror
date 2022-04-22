@@ -100,16 +100,11 @@ func (Config) ParseArguments() Config {
 		os.Exit(1)
 	}
 
-	stripTrailSlash := func(path string) string {
-		last := len(path) - 1
-		if (len(path) > 0) && (path[last:] == string(os.PathSeparator) || path[last:] == "\\") { path = path[:last] }
-		return path
-	}
 	localDir   := stripTrailSlash(flag.Arg(0))
 	remoteHost := flag.Arg(1)
 	remoteDir  := stripTrailSlash(flag.Arg(2))
 
-	if localDir[:2] == "~/" {
+	if len(localDir) >= 2 && localDir[:2] == "~/" {
 		usr, err := user.Current()
 		PanicIf(err)
 		dir := usr.HomeDir
@@ -309,6 +304,11 @@ func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFun
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) { callback() }
 	}()
 	return &cancel
+}
+func stripTrailSlash(path string) string {
+	last := len(path) - 1
+	if (len(path) > 0) && (path[last:] == string(os.PathSeparator) || path[last:] == "\\") { path = path[:last] }
+	return path
 }
 
 type SSHMirror struct {

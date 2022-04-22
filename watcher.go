@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/0leksandr/my.go"
 	"github.com/fsnotify/fsnotify"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -147,13 +149,27 @@ type InotifyWatcher struct {
 	Watcher
 	io.Closer
 	modifications  chan Modification
-	inotifyProcess *os.Process
 	logger         Logger
+	onClose        func() error
 }
 func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, error) {
+	modifications := make(chan Modification) // MAYBE: reserve size
 	watcher := InotifyWatcher{
-		modifications: make(chan Modification), // MAYBE: reserve size
+		modifications: modifications,
 		logger:        logger,
+		onClose: func() error {
+			close(modifications)
+			return nil
+		},
+	}
+
+	nrFiles, errCalculateFiles := watcher.getNrFiles(root)
+	if errCalculateFiles != nil { return nil, errCalculateFiles }
+	maxUserWatchers, errMaxUserWatchers := watcher.getMaxUserWatchers()
+	if errMaxUserWatchers != nil { return nil, errMaxUserWatchers }
+	requiredNrWatchers := watcher.getRequiredNrWatchers(nrFiles)
+	if requiredNrWatchers < maxUserWatchers { // THINK: https://www.baeldung.com/linux/inotify-upper-limit-reached
+		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return nil, err }
 	}
 
 	const CloseWrite = "CLOSE_WRITE"
@@ -180,19 +196,24 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		filename  string
 	}
 	events := make(chan Event) // MAYBE: reserve size
+	watcher.onClose = func() error {
+		close(events)
+		close(modifications)
+		return nil
+	}
 
 	stdout, err1 := command.StdoutPipe()
 	PanicIf(err1)
 	stdoutScanner := bufio.NewScanner(stdout)
+	reg := regexp.MustCompile(fmt.Sprintf("^%s(.+)\t([^\t]+)$", stripTrailSlash(root) + string(os.PathSeparator)))
 	go func() { // stdout to events
 		for stdoutScanner.Scan() {
 			line := stdoutScanner.Text()
 			watcher.logger.Debug("inotify.line", line)
-			reg := regexp.MustCompile(fmt.Sprintf("^%s/(.+)\t([^\t]+)$", root)) // TODO: strip trail slash
 			parts := reg.FindStringSubmatch(line)
 			filename := parts[1]
 			eventsStr := parts[2]
-			eventType, err := func() (string, error) {
+			eventType, errReadEvent := func() (string, error) {
 				for _, eventType := range strings.Split(eventsStr, ",") {
 					for _, knownType := range []string{
 						CloseWrite,
@@ -205,13 +226,13 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 				}
 				return "", errors.New("unknown event: " + eventsStr)
 			}()
-			if err == nil {
+			if errReadEvent == nil {
 				events <- Event{
 					eventType: eventType,
 					filename:  filename,
 				}
 			} else {
-				watcher.logger.Error(err.Error())
+				watcher.logger.Error(errReadEvent.Error())
 			}
 		}
 
@@ -264,16 +285,88 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		}
 	}()
 
-	err := command.Start()
-	watcher.inotifyProcess = command.Process
+	errCommandStart := command.Start()
+	watcher.onClose = func() error {
+		return command.Process.Signal(syscall.SIGTERM)
+	}
 
-	// PRIORITY: calculate and check nr of files to be watched, see https://www.baeldung.com/linux/inotify-upper-limit-reached
 	// TODO: read error/info stream, await for watches to establish
-	return &watcher, err
+	return &watcher, errCommandStart
 }
 func (watcher *InotifyWatcher) Close() error {
-	return watcher.inotifyProcess.Signal(syscall.SIGTERM)
+	return watcher.onClose()
 }
 func (watcher *InotifyWatcher) Modifications() <-chan Modification {
 	return watcher.modifications
+}
+func (watcher *InotifyWatcher) getNrFiles(root string) (uint64, error) {
+	var nrFiles uint64
+	done := make(chan bool, 1)
+	var errStopwatch error
+	doNotWrite := cancellableTimer(
+		1 * time.Second,
+		func() {
+			//fmt.Println("Calculating number of files in watched directory")
+			errStopwatch = stopwatch(
+				"Calculating number of files in watched directory",
+				func() error {
+					select { case <-done: return nil }
+				},
+			)
+			if errStopwatch == nil {
+				fmt.Printf("%d files must be watched in total\n", nrFiles)
+			}
+		},
+	)
+	command := exec.Command("find", root, "-type", "f") // MAYBE: `wc -l`
+	out, err := command.StdoutPipe()
+	if err != nil { return 0, err }
+	buffer := bufio.NewScanner(out)
+	err = command.Start()
+	if err != nil { return 0, err }
+	for buffer.Scan() { nrFiles++ }
+	(*doNotWrite)()
+	done <- true
+	if errStopwatch != nil { return 0, errStopwatch }
+	return nrFiles, nil
+}
+func (watcher *InotifyWatcher) getMaxUserWatchers() (uint64, error) {
+	var maxNrWatchers uint64
+	var errParseUint, errCat error
+	if !my.RunCommand(
+		"",
+		"cat /proc/sys/fs/inotify/max_user_watches",
+		func(out string) {
+			maxNrWatchers, errParseUint = strconv.ParseUint(out, 10, 64)
+		},
+		func(err string) {
+			errCat = errors.New(err)
+		},
+	) {
+		return 0, errors.New("could not determine max_user_watchers")
+	}
+	if errCat != nil { return 0, errCat }
+	if errParseUint != nil { return 0, errParseUint }
+	if maxNrWatchers == 0 { return 0, errors.New("could not determine max_user_watchers") }
+
+	return maxNrWatchers, nil
+}
+func (watcher *InotifyWatcher) getRequiredNrWatchers(nrFiles uint64) uint64 {
+	nrWatchers := uint64(1)
+	for nrFiles > nrWatchers / 2 {
+		nrWatchers *= 2
+	}
+	return nrWatchers
+}
+func (watcher *InotifyWatcher) setMaxUserWatchers(nrWatchers uint64) error {
+	args := []string{
+		"sysctl",
+		"fs.inotify.max_user_watches=" + strconv.FormatUint(nrWatchers, 10),
+	}
+	fmt.Println("Higher number of max_user_watchers required")
+	fmt.Println("sudo " + strings.Join(args, " "))
+	command := exec.Command("sudo", args...)
+	command.Stdin = os.Stdin
+
+	return command.Run()
 }
