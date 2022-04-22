@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/0leksandr/my.go"
 	"io/ioutil"
@@ -15,328 +17,27 @@ import (
 	"time"
 )
 
-// MAYBE: test file `--`
+// TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
+// TODO: test tabs, zero-symbols and others in filenames
+// MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
+// MAYBE: test tricky filenames: `--`, `.`, `..`, `*`, `:`
 // MAYBE: test ignored
 // MAYBE: duplicate filenames in master chains
+// MAYBE: test fallback
 
-var delaysBasic = []float32{
-	0,
+var delaysBasic = [...]float32{ // TODO: non-constant delays (pseudo-random pauses)
+	0.,
 	0.1,
 	0.6,
 }
-var delaysMaster = []float32{
-	0,
+var delaysMaster = [...]float32{
+	0.,
 	0.1,
 	0.4,
 	0.6,
-	1,
+	1.,
 }
 
-type TestFilename string
-func (filename TestFilename) escaped() string {
-	return wrapApostrophe(string(filename))
-}
-
-type TestModificationInterface interface {
-	commandVariants() []string
-}
-type TestSimpleModification struct {
-	command string
-}
-func (modification TestSimpleModification) commandVariants() []string {
-	return []string{modification.command}
-}
-type TestOptionalModification struct {
-	command string
-}
-func (modification TestOptionalModification) commandVariants() []string {
-	return []string{
-		"",
-		modification.command,
-	}
-}
-type TestVariantsModification struct {
-	variants []string
-}
-func (modification TestVariantsModification) commandVariants() []string {
-	return modification.variants
-}
-
-type TestScenario struct {
-	before []string
-	after  []string
-}
-func (scenario TestScenario) applyTarget(targetId int) {
-	reg := regexp.MustCompile("\\[target]")
-	target := fmt.Sprintf("target%d", targetId)
-	for i, command := range scenario.before { scenario.before[i] = reg.ReplaceAllString(command, target) }
-	for i, command := range scenario.after { scenario.after[i] = reg.ReplaceAllString(command, target) }
-}
-
-type TestModificationsList []TestModificationInterface
-func (modifications TestModificationsList) commandsVariants() [][]string {
-	//commands := make([][]string, 0, len(modifications))
-	//for _, modification := range modifications {
-	//	commands = append(commands, modification.commandVariants())
-	//}
-	////return Twines(commands).([][]string)
-	//return CartesianProducts(commands).([][]string)
-
-	if len(modifications) == 0 { return nil }
-	nrVariants := 1
-	for _, modification := range modifications {
-		nrVariants *= len(modification.commandVariants())
-	}
-	variants0 := modifications[0].commandVariants()
-	variants := make([][]string, 0, len(variants0))
-	for _, variant := range variants0 { variants = append(variants, []string{variant}) }
-	for _, modification := range modifications[1:] {
-		modificationVariants := modification.commandVariants()
-		newVariants := make([][]string, 0, len(variants) * len(modificationVariants))
-		for _, variant := range variants {
-			//variantCopy := make([]string, len(variant))
-			//copy(variantCopy, variant)
-
-			for _, command := range modificationVariants {
-				newVariants = append(newVariants, append(variant, command))
-			}
-		}
-		variants = newVariants
-	}
-	return variants
-}
-
-type TestModificationChain struct { // TODO: rename!
-	before TestModificationsList
-	after  TestModificationsList
-}
-func (chain TestModificationChain) scenarios() []TestScenario {
-	variantsBefore := chain.before.commandsVariants()
-	if len(variantsBefore) == 0 { variantsBefore = [][]string{{""}} }
-	variantsAfter := chain.after.commandsVariants()
-	scenarios := make([]TestScenario, 0, len(variantsBefore) * len(variantsAfter))
-	for _, before := range variantsBefore {
-		for _, after := range variantsAfter {
-			//copyBefore := make([]string, len(before))
-			//copy(copyBefore, before)
-			//copyAfter := make([]string, len(after))
-			//copy(copyAfter, after)
-
-			scenarios = append(scenarios, TestScenario{
-				before: before,
-				after:  after,
-			})
-		}
-	}
-	return scenarios
-}
-
-var fileIndex = 0
-func generateFilename(inTarget bool) TestFilename {
-	dir := "."
-	if inTarget { dir += "/target" }
-	fileIndex++
-	return TestFilename(fmt.Sprintf("%s/file-%d", dir, fileIndex))
-
-	//var symbols []string
-	//for _, symbol := range []rune("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗") {
-	//	symbols = append(symbols, string(symbol))
-	//}
-	//symbols = append(
-	//	symbols,
-	//	"\\'",
-	//	"\\\\'",
-	//	"\\\\\\'",
-	//	"\\\\\\\\'",
-	//	"\\\\\\\\\\'",
-	//)
-	//nrSymbols := rand.Intn(150) + 1
-	//dir := "./"
-	//if inTarget { dir += "target/" }
-	//var filename string
-	//for i := 0; i < nrSymbols; i++ {
-	//	filename += symbols[rand.Intn(len(symbols))]
-	//}
-	//if my.InArray(
-	//	filename,
-	//	[]string{
-	//		".",
-	//		"..",
-	//		"*",
-	//		".gitignore",
-	//		"target",
-	//	},
-	//) {
-	//	return generateFilename(inTarget)
-	//}
-	//return TestFilename(dir + filename)
-}
-func create(filename TestFilename) string {
-	return fmt.Sprintf("touch %s", filename.escaped())
-}
-func write(filename TestFilename, size int) string {
-	// TODO: guarantee uniqueness
-	return fmt.Sprintf("cat /dev/urandom |head -c %d > %s", size, filename.escaped())
-}
-func move(from TestFilename, to TestFilename) string {
-	return fmt.Sprintf("mv %s %s", from.escaped(), to.escaped())
-}
-func remove(filename TestFilename) string {
-	return fmt.Sprintf("/bin/rm %s", filename.escaped())
-}
-
-func basicModificationChains() []TestModificationChain {
-	return []TestModificationChain{
-		(func(a TestFilename, b TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					TestSimpleModification{write(a, 10)},
-					TestSimpleModification{write(b, 11)},
-				},
-				after: TestModificationsList{
-					TestSimpleModification{remove(a)},
-					TestSimpleModification{move(b, a)},
-				},
-			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, cExt TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					TestVariantsModification{[]string{
-						"",
-						create(b),
-						write(b, 10),
-					}},
-				},
-				after: TestModificationsList{
-					TestVariantsModification{[]string{
-						create(a),
-						write(a, 11),
-					}},
-					TestSimpleModification{move(a, b)},
-					TestVariantsModification{[]string{
-						remove(b),
-						move(b, cExt),
-					}},
-				},
-			}
-		})(generateFilename(true), generateFilename(true), generateFilename(false)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					TestSimpleModification{create(a)},
-				},
-				after:  TestModificationsList{
-					TestSimpleModification{move(a, b)},
-					TestSimpleModification{move(b, c)},
-				},
-			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					TestVariantsModification{[]string{
-						create(a),
-						write(a, 10),
-					}},
-					TestVariantsModification{[]string{
-						"",
-						create(b),
-						write(b, 11),
-					}},
-					TestSimpleModification{write(c, 12)},
-				},
-				after: TestModificationsList{
-					TestSimpleModification{move(a, b)},
-					TestOptionalModification{write(b, 13)},
-					TestVariantsModification{[]string{
-						"",
-						create(a),
-						write(a, 14),
-						move(c, a),
-					}},
-				},
-			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					TestSimpleModification{write(a, 10)},
-					TestSimpleModification{write(b, 11)},
-					TestOptionalModification{write(c, 12)},
-				},
-				after: TestModificationsList{
-					TestSimpleModification{move(a, c)},
-					TestSimpleModification{move(b, a)},
-					TestSimpleModification{move(c, b)},
-				},
-			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, cExt TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					TestSimpleModification{write(a, 10)},
-				},
-				after: TestModificationsList{
-					TestSimpleModification{move(a, cExt)},
-					TestVariantsModification{[]string{
-						create(b),
-						write(b, 11),
-					}},
-				},
-			}
-		})(generateFilename(true), generateFilename(true), generateFilename(false)),
-		(func(a TestFilename, bExt TestFilename, cExt TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					//TestOptionalModification{write(a, 10)}, // MAYBE: find a normal way to test, and uncomment
-					TestSimpleModification{write(a, 10)},
-					TestSimpleModification{write(bExt, 11)},
-					TestSimpleModification{write(cExt, 12)},
-				},
-				after: TestModificationsList{
-					TestSimpleModification{move(bExt, a)},
-					TestOptionalModification{write(a, 13)},
-					TestSimpleModification{move(a, cExt)},
-				},
-			}
-		})(generateFilename(true), generateFilename(false), generateFilename(false)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					TestVariantsModification{[]string{
-						create(a),
-						write(a, 10),
-					}},
-					TestVariantsModification{[]string{
-						create(b),
-						write(b, 10),
-					}},
-				},
-				after:  TestModificationsList{
-					TestSimpleModification{move(b, c)},
-					TestSimpleModification{move(a, b)},
-				},
-			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationChain {
-			return TestModificationChain{
-				before: TestModificationsList{
-					TestSimpleModification{write(a, 10)},
-					TestSimpleModification{write(b, 11)},
-				},
-				after:  TestModificationsList{
-					TestSimpleModification{move(b, c)},
-					TestSimpleModification{move(a, b)},
-					TestVariantsModification{[]string{
-						write(c, 12),
-						write(b, 13),
-					}},
-				},
-			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-	}
-}
 func filenameModificationChains() []TestModificationChain {
 	apostrophes := []string{
 		"\\'",
@@ -346,7 +47,7 @@ func filenameModificationChains() []TestModificationChain {
 		"\\\\\\\\\\'",
 	}
 	filenames := make([]TestFilename, 0, len(apostrophes))
-	for i := 0; i < len(apostrophes)-1; i++ {
+	for i := 0; i <= len(apostrophes); i++ {
 		filenames = append(
 			filenames,
 			TestFilename("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗" + strings.Join(apostrophes[:i], "")),
@@ -361,7 +62,7 @@ func filenameModificationChains() []TestModificationChain {
 			return TestModificationChain{after: TestModificationsList{TestSimpleModification{write(filename, 10)}}}
 		},
 		func(filename TestFilename) TestModificationChain {
-			filename2 := filename + "2"
+			filename2 := filename + "$"
 			return TestModificationChain{
 				before: TestModificationsList{TestSimpleModification{create(filename2)}},
 				after: TestModificationsList{TestSimpleModification{move(filename2, filename)}},
@@ -383,8 +84,8 @@ func filenameModificationChains() []TestModificationChain {
 	return chains2
 }
 func modificationChains() []TestModificationChain {
-	basicChains := basicModificationChains()
-	chains := make([]TestModificationChain, 0, (len(basicChains) * len(delaysBasic)) + len(delaysMaster))
+	basicCases := basicModificationCases()
+	chains := make([]TestModificationChain, 0, (len(basicCases) * len(delaysBasic)) + len(delaysMaster))
 	simplify := func(modifications []TestModificationInterface) []TestModificationInterface {
 		simplified := make([]TestModificationInterface, 0, len(modifications))
 		for _, modification := range modifications {
@@ -404,9 +105,9 @@ func modificationChains() []TestModificationChain {
 		return merged
 	}
 	var masterChain TestModificationChain
-	for _, chain := range basicChains {
-		masterChain.before = append(masterChain.before, simplify(chain.before)...)
-		masterChain.after = append(masterChain.after, simplify(chain.after)...)
+	for _, testCase := range basicCases {
+		masterChain.before = append(masterChain.before, simplify(testCase.chain.before)...)
+		masterChain.after = append(masterChain.after, simplify(testCase.chain.after)...)
 	}
 	for _, delaySeconds := range delaysMaster {
 		chains = append(chains, TestModificationChain{
@@ -415,10 +116,10 @@ func modificationChains() []TestModificationChain {
 		})
 	}
 	for _, delaySeconds := range delaysBasic {
-		for _, chain := range basicChains {
+		for _, testCase := range basicCases {
 			chains = append(chains, TestModificationChain{
-				before: chain.before,
-				after:  mergeDelays(chain.after, delaySeconds),
+				before: testCase.chain.before,
+				after:  mergeDelays(testCase.chain.after, delaySeconds),
 			})
 		}
 	}
@@ -427,36 +128,63 @@ func modificationChains() []TestModificationChain {
 }
 
 type TestConfig struct {
-	IdentityFile    string
-	RemoteAddress   string
-	RemotePath      string
-	TimeoutSeconds  int
-	NrThreads       int
-	Debug           bool
-	IntegrationTest bool
+	IdentityFile     string
+	RemoteAddress    string
+	RemotePath       string
+	TimeoutSeconds   int
+	NrThreads        int
+	ErrorCmd         string
+	LastDelaySeconds int
+	StopOnFail       bool
+	IntegrationTest  bool
 }
-func (config TestConfig) IsSet() bool {
+func (TestConfig) New(filename string) TestConfig {
+	configFile, err := os.Open(filename)
+	PanicIf(err)
+	defer func() { Must(configFile.Close()) }()
+	testConfig := TestConfig{}
+	Must(json.NewDecoder(configFile).Decode(&testConfig))
+
+	fileContent, err := ioutil.ReadFile(filename)
+	PanicIf(err)
+	Must(testConfig.check(fileContent))
+
+	return testConfig
+}
+func (config TestConfig) check(originalContent []byte) error {
 	value := reflect.ValueOf(config)
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
-		if field.Kind() != reflect.Bool {
-			if reflect.New(field.Type()).Elem().Interface() == field.Interface() { return false }
+		fieldName := value.Type().Field(i).Name
+		allowEmpty := field.Kind() == reflect.Bool || fieldName == "ErrorCmd" || fieldName == "LastDelaySeconds"
+		if !allowEmpty && reflect.New(field.Type()).Elem().Interface() == field.Interface() {
+			return errors.New(fmt.Sprintf("field %s is empty", fieldName))
 		}
 	}
-	return true
+
+	buffer := &bytes.Buffer{}
+	if err := json.NewEncoder(buffer).Encode(config); err != nil { return err }
+	replaceBlanks := func(text []byte) []byte { // MAYBE: something smarter
+		for from, to := range map[string][]byte{
+			"\\n *": {},
+			"\": +": []byte("\":"),
+		} {
+			text = regexp.MustCompile(from).ReplaceAll(text, to)
+		}
+		return text
+	}
+	if !bytes.Equal(replaceBlanks(originalContent), replaceBlanks(buffer.Bytes())) {
+		return errors.New("some fields are missing")
+	}
+
+	return nil
 }
 
 func TestIntegration(t *testing.T) {
 	currentDir, err := os.Getwd()
 	PanicIf(err)
 	sandbox := fmt.Sprintf("%s/sandbox", currentDir)
-
-	configFile, err := os.Open(fmt.Sprintf("%s/test-config.json", currentDir))
-	PanicIf(err)
-	defer func() { Must(configFile.Close()) }()
-	testConfig := TestConfig{}
-	Must(json.NewDecoder(configFile).Decode(&testConfig))
-	if !testConfig.IsSet() { panic("config is not set") }
+	testConfig := TestConfig{}.New(fmt.Sprintf("%s/test-config.json", currentDir))
 
 	controlPathFile, err := ioutil.TempFile("", "sshmirror-test-")
 	PanicIf(err)
@@ -534,13 +262,28 @@ func TestIntegration(t *testing.T) {
 	my.Dump(nrScenarios)
 
 	scenarios := make(chan TestScenario, nrScenarios)
-	if testConfig.Debug { my.Dump2(chains) }
 	for _, chain := range chains {
 		for _, scenario := range chain.scenarios() {
 			scenarios <- scenario
 		}
 	}
 	close(scenarios)
+
+	loggers := make([]*InMemoryLogger, 0, testConfig.NrThreads)
+	for i := 0; i < testConfig.NrThreads; i++ {
+		loggers = append(loggers, &InMemoryLogger{
+			timestamps: true,
+			errorLogger: (func() ErrorLogger {
+				if testConfig.ErrorCmd != "" {
+					return ErrorCmdLogger{
+						errorCmd: testConfig.ErrorCmd,
+					}
+				} else {
+					return StdErrLogger{}
+				}
+			})(),
+		})
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(testConfig.NrThreads)
@@ -557,13 +300,15 @@ func TestIntegration(t *testing.T) {
 			my.RunCommand(sandbox, mkdir, nil, func(err string) { panic(err) })
 			executeRemote(testConfig.RemotePath, mkdir)
 
-			var syncing CountableWaitGroup
+			logger := loggers[processId - 1]
+
+			var syncing Locker
 			SUTsDone.Add(1)
 			if testConfig.IntegrationTest {
 				command := exec.Command(
 					"./sshmirror",
 					"-i="+testConfig.IdentityFile,
-					"-v=1",
+					"-v=0",
 					localTarget,
 					testConfig.RemoteAddress,
 					remoteTarget,
@@ -575,14 +320,19 @@ func TestIntegration(t *testing.T) {
 				}()
 				Must(command.Start())
 			} else {
-				client := launchClient(Config{
+				client := SSHMirror{}.New(Config{
 					localDir:     localTarget,
 					remoteHost:   testConfig.RemoteAddress,
 					remoteDir:    remoteTarget,
 					identityFile: testConfig.IdentityFile,
 					connTimeout:  testConfig.TimeoutSeconds,
 				})
-				client.onReady = func() { syncing.DoneAll() }
+				client.SetLogger(logger)
+				client.onReady = func() {
+					client.logger.Debug("client.onReady")
+					syncing.Unlock()
+				}
+				go client.Run()
 				defer func() {
 					Must(client.Close())
 					SUTsDone.Done()
@@ -602,10 +352,7 @@ func TestIntegration(t *testing.T) {
 					my.Dump(scenarioIdx)
 					scenarioIdx++ // MAYBE: atomic
 				})()
-				if testConfig.Debug {
-					my.Dump(processId)
-					my.Dump2(scenario)
-				}
+				logger.Debug("scenario", scenario)
 
 				check := func() {
 					localPath := localTarget
@@ -636,17 +383,15 @@ func TestIntegration(t *testing.T) {
 					if !reflect.DeepEqual([]string{localHash}, remoteHash) {
 						t.Error("hashes mismatch", localHash, remoteHash)
 
-						my.Dump(processId)
-						my.Dump2(scenario)
-						my.Dump(localHash)
-						my.Dump(remoteHash)
+						logger.Debug("check failed")
+						logger.Debug("processId", processId)
 						for _, cmd := range []string{
 							"find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha1sum",
 							"find . \\( -type f -o -type d \\) -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a'",
 							hashCmd,
+							"tree ../..",
 							"cat -- *",
 						} {
-							my.Dump(cmd)
 							local := make([]string, 0)
 							my.RunCommand(
 								localPath,
@@ -654,22 +399,27 @@ func TestIntegration(t *testing.T) {
 								func(out string) { local = append(local, out) },
 								func(err string) { panic(err) },
 							)
-							my.Dump2(local)
 							remote := executeRemote(remotePath, cmd)
-							my.Dump2(remote)
-							my.Dump(reflect.DeepEqual(local, remote))
+							logger.Debug("cmd", cmd)
+							logger.Debug("local", local)
+							logger.Debug("remote", remote)
+							logger.Debug("equal", reflect.DeepEqual(local, remote))
 						}
-						if testConfig.Debug { panic("test failed") }
+						if testConfig.StopOnFail {
+							my.Dump("logs:")
+							logger.Print()
+							panic("test failed")
+						}
 					}
 				}
 
-				scenario.applyTarget(processId)
+				//scenario.applyTarget(processId)
 
 				for _, command := range scenario.before {
-					if testConfig.Debug { my.Dump(command) }
+					logger.Debug("command.before", command)
 
 					if command != "" {
-						if !testConfig.IntegrationTest { syncing.Add(1) }
+						if !testConfig.IntegrationTest { syncing.Lock() }
 
 						my.RunCommand(
 							localSandbox,
@@ -682,10 +432,10 @@ func TestIntegration(t *testing.T) {
 				awaitSync()
 
 				for _, command := range scenario.after {
-					if testConfig.Debug { my.Dump(command) }
+					logger.Debug("command.after", command)
 
-					if command != "" {
-						if !testConfig.IntegrationTest { syncing.Add(1) }
+					if command != "" && command != MovementCleanup {
+						if !testConfig.IntegrationTest { syncing.Lock() }
 
 						my.RunCommand(
 							localSandbox,
@@ -698,6 +448,19 @@ func TestIntegration(t *testing.T) {
 				awaitSync()
 				check()
 				reset(remoteSandbox, localSandbox, false)
+			}
+			if testConfig.LastDelaySeconds != 0 {
+				loggers[processId-1] = nil
+				go func() {
+					time.Sleep(time.Duration(testConfig.LastDelaySeconds) * time.Second)
+					for _, foreignLogger := range loggers {
+						if foreignLogger != nil {
+							my.Dump("open logs:")
+							foreignLogger.Print()
+							panic("test failed")
+						}
+					}
+				}()
 			}
 
 			wg.Done()
