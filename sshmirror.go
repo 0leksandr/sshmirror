@@ -23,9 +23,9 @@ import (
 // TODO: ignore special types of files (pipes, block devices etc.)
 // TODO: support directories
 // TODO: support scp without rsync
+// TODO: multiple files movements with one command (but preserve order of "chained" movements)
 // MAYBE: support symlinks
 // MAYBE: automatically adjust timeout based on server response rate
-// MAYBE: multiple files movements with one command (but preserve order of "chained" movements)
 // MAYBE: copy permissions
 // MAYBE: copy files metadata (creation time etc.)
 // MAYBE: upload new files with scp
@@ -194,7 +194,7 @@ func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
 
 	return nil
 }
-func (manager RemoteManager) FallbackQueue(queue UploadingModificationsQueue) { // MAYBE: legacy, remove
+func (manager RemoteManager) Fallback(queue UploadingModificationsQueue) { // MAYBE: legacy, remove
 	var files []string
 	for _, updated := range queue.updated { files = append(files, updated.filename) }
 	for _, deleted := range queue.deleted { files = append(files, deleted.filename) }
@@ -203,9 +203,9 @@ func (manager RemoteManager) FallbackQueue(queue UploadingModificationsQueue) { 
 		files = append(files, moved.to)
 	}
 
-	manager.FallbackFiles(files)
+	manager.fallbackFiles(files)
 }
-func (manager RemoteManager) FallbackFiles(files []string) {
+func (manager RemoteManager) fallbackFiles(files []string) {
 	client := manager.client
 	verbosity := manager.verbosity
 	filesUnique := make(map[string]interface{})
@@ -265,7 +265,7 @@ func (manager RemoteManager) FallbackFiles(files []string) {
 	}
 
 	if !result {
-		manager.FallbackFiles(files)
+		manager.fallbackFiles(files)
 	}
 }
 func (manager RemoteManager) message(filenames []string, sign string, action string) string {
@@ -314,11 +314,11 @@ func cancellableTimer(timeout time.Duration, callback func()) *context.CancelFun
 type SSHMirror struct {
 	io.Closer
 	LoggerAware
-	root     string
-	listener Listener
-	remote   RemoteManager
-	logger   Logger
-	onReady  func() // only for test
+	root    string
+	watcher Watcher
+	remote  RemoteManager
+	logger  Logger
+	onReady func() // only for test
 }
 func (SSHMirror) New(config Config) *SSHMirror {
 	errorLogger := func() ErrorLogger {
@@ -330,22 +330,34 @@ func (SSHMirror) New(config Config) *SSHMirror {
 	}()
 	logger := NullLogger{errorLogger: errorLogger}
 
-	listenerFactory := ListenerFactory{}.New()
-	listenerFactory.SetLogger(logger)
+	watcher := (func() Watcher {
+		if inotify, err := (InotifyWatcher{}.New(config.localDir, config.exclude, logger)); err == nil {
+			return inotify
+		} else {
+			Must(inotify.Close())
+			logger.Error(err.Error())
+			logger.Error(
+				"Warning! Current FS events provider: fsnotify. It has known problem of not tracking contents of " +
+					"subdirectories, created after program was started. It can only reliably track files in existing " +
+					"subdirectories",
+			)
+			return FsnotifyWatcher{}.New(config.localDir, config.exclude)
+		}
+	})()
 
 	remoteManager := RemoteManager{}.New(config)
 	remoteManager.SetLogger(logger)
 
 	return &SSHMirror{
-		root:     config.localDir,
-		listener: listenerFactory.Get(config.localDir, config.exclude),
-		remote:   remoteManager,
-		logger:   logger,
-		onReady:  func() {},
+		root:    config.localDir,
+		watcher: watcher,
+		remote:  remoteManager,
+		logger:  logger,
+		onReady: func() {},
 	}
 }
 func (client *SSHMirror) Close() error {
-	err1 := client.listener.Close()
+	err1 := client.watcher.Close()
 	err2 := client.remote.Close()
 
 	if err1 != nil { return err1 }
@@ -374,10 +386,13 @@ func (client *SSHMirror) Run() {
 	client.logger.Debug("remote client initialized")
 
 	doSync := func() {
+		client.logger.Debug("doSync")
 		syncing.Lock()
 		defer syncing.Unlock()
 
+		client.logger.Debug("waiting for remote client")
 		client.remote.Ready().Wait()
+		client.logger.Debug("remote client ready")
 
 		if cancelFirst != nil {
 			(*cancelFirst)()
@@ -388,22 +403,27 @@ func (client *SSHMirror) Run() {
 			cancelLast = nil
 		}
 
-		if queue.IsEmpty() {
-			client.logger.Error("Empty queue") // TODO: fix
+		if queue.IsEmpty() { // during upload, multiple syncs were produces, first sync synchronized everything
 			return
 		}
 
-		if uploadingModificationsQueue, err := queue.Flush(client.root); err == nil {
-			if err2 := client.remote.Sync(uploadingModificationsQueue); err2 != nil {
-				client.logger.Error(err2.Error())
+		var doSync2 func(UploadingModificationsQueue, error) // TODO: rename
+		doSync2 = func(prevUpload UploadingModificationsQueue, prevErr error) {
+			client.logger.Debug("doSync2.queue", &queue)
+			uploadingModificationsQueue, err := queue.Flush(client.root)
+			PanicIf(err) // MAYBE: fallback
+			if !uploadingModificationsQueue.Equals(prevUpload) {
+				client.logger.Debug("uploadingModificationsQueue", uploadingModificationsQueue)
+				if err2 := client.remote.Sync(uploadingModificationsQueue); err2 != nil {
+					doSync2(uploadingModificationsQueue, err2)
+				}
+			} else {
+				client.logger.Error(prevErr.Error())
 				client.logger.Error("Applying fallback algorithm")
-				client.remote.FallbackQueue(uploadingModificationsQueue)
+				client.remote.Fallback(uploadingModificationsQueue)
 			}
-		} else {
-			client.logger.Error(err.Error())
-			client.logger.Error("Applying fallback algorithm")
-			client.remote.FallbackFiles(client.listener.Fallback())
 		}
+		doSync2(UploadingModificationsQueue{}, nil)
 
 		if queue.IsEmpty() { client.onReady() }
 	}
@@ -421,7 +441,7 @@ func (client *SSHMirror) Run() {
 	}
 
 	select {
-		case modification, ok := <-client.listener.Modifications():
+		case modification, ok := <-client.watcher.Modifications():
 			if !ok { panic("modifications channel closed") }
 			modificationReceived(modification)
 		default:
@@ -430,7 +450,7 @@ func (client *SSHMirror) Run() {
 
 	for {
 		select {
-			case modification, ok := <-client.listener.Modifications():
+			case modification, ok := <-client.watcher.Modifications():
 				if !ok { return } // TODO: make sure previous (running) modifications are uploaded
 				modificationReceived(modification)
 		}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"os"
 	"sync"
 )
 
@@ -75,9 +74,13 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 	if moved.from == moved.to { return errors.New("moving to same location") }
 
 	addToQueue := true
-	for _, deleted := range queue.deleted { // before the next block, because else will be overwritten
+	for i, deleted := range queue.deleted { // before the next block, because else will be overwritten
 		if deleted.filename == moved.from {
 			return errors.New("deleted, then moved from")
+		}
+
+		if deleted.filename == moved.to {
+			queue.removeDeleted(i)
 		}
 	}
 
@@ -102,7 +105,11 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 			// TODO: think about
 		}
 		if previouslyMoved.to == moved.from {
-			queue.moved[i].to = moved.to
+			if previouslyMoved.from == moved.to {
+				queue.removeMoved(i)
+			} else {
+				queue.moved[i].to = moved.to
+			}
 			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
 			addToQueue = false
 		}
@@ -117,13 +124,13 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 	return nil
 }
 
-type ModificationsQueue struct { // TODO: atomic
+type ModificationsQueue struct {
+	// MAYBE: map filename: modification. For moved, key is moved.to
 	updated []Updated
 	deleted []Deleted
 	moved   []Moved
 	mutex   sync.Mutex
 }
-
 func (queue *ModificationsQueue) AtomicAdd(modification Modification) error {
 	queue.mutex.Lock()
 	defer queue.mutex.Unlock()
@@ -212,29 +219,29 @@ func (queue *ModificationsQueue) optimize(localDir string) error {
 		if err != nil { return err }
 	}
 
-	// false moves
-	// TODO: is this specific for fsnotify? Move there
-	fileEmpty := func(filename string) (bool, error) {
-		fileInfo, err := os.Stat(localDir + string(os.PathSeparator) + filename)
-		if err == nil {
-			return fileInfo.Size() == 0, nil
-		} else {
-			return false, err
-		}
-	}
-	for i := 0; i < len(queue.moved); i++ {
-		moved := queue.moved[i]
-		empty, err := fileEmpty(moved.to)
-		if err != nil { return err }
-		if empty {
-			queue.removeMoved(i)
-			i--
-			if err2 := queue.Add(Updated{filename: moved.to}); err2 != nil { return err2 }
-			if !queue.HasModifications(moved.from) {
-				if err2 := queue.Add(Deleted{filename: moved.from}); err2 != nil { return err2 }
-			}
-		}
-	}
+	//// false moves
+	//// TODO: is this specific for fsnotify? Move there
+	//fileEmpty := func(filename string) (bool, error) {
+	//	fileInfo, err := os.Stat(localDir + string(os.PathSeparator) + filename)
+	//	if err == nil {
+	//		return fileInfo.Size() == 0, nil
+	//	} else {
+	//		return false, err
+	//	}
+	//}
+	//for i := 0; i < len(queue.moved); i++ {
+	//	moved := queue.moved[i]
+	//	empty, err := fileEmpty(moved.to)
+	//	if err != nil { return err }
+	//	if empty {
+	//		queue.removeMoved(i)
+	//		i--
+	//		if err2 := queue.Add(Updated{filename: moved.to}); err2 != nil { return err2 }
+	//		if !queue.HasModifications(moved.from) {
+	//			if err2 := queue.Add(Deleted{filename: moved.from}); err2 != nil { return err2 }
+	//		}
+	//	}
+	//}
 
 	return nil
 }
@@ -258,4 +265,25 @@ type UploadingModificationsQueue struct {
 	updated []Updated
 	deleted []Deleted
 	moved   []Moved
+}
+func (queue UploadingModificationsQueue) Equals(other UploadingModificationsQueue) bool {
+	if
+		len(queue.updated) != len(other.updated) ||
+		len(queue.deleted) != len(other.deleted) ||
+		len(queue.moved) != len(other.moved,
+	) {
+		return false
+	}
+
+	for i, updated := range queue.updated {
+		if updated != other.updated[i] { return false }
+	}
+	for i, deleted := range queue.deleted {
+		if deleted != other.deleted[i] { return false }
+	}
+	for i, moved := range queue.moved {
+		if moved != other.moved[i] { return false }
+	}
+
+	return true
 }
