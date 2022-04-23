@@ -168,12 +168,12 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	}
 
 	nrFiles, errCalculateFiles := watcher.getNrFiles(root)
-	if errCalculateFiles != nil { return nil, errCalculateFiles }
+	if errCalculateFiles != nil { return &watcher, errCalculateFiles }
 	maxUserWatchers, errMaxUserWatchers := watcher.getMaxUserWatchers()
-	if errMaxUserWatchers != nil { return nil, errMaxUserWatchers }
+	if errMaxUserWatchers != nil { return &watcher, errMaxUserWatchers }
 	requiredNrWatchers := watcher.getRequiredNrWatchers(nrFiles)
-	if requiredNrWatchers < maxUserWatchers { // THINK: https://www.baeldung.com/linux/inotify-upper-limit-reached
-		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return nil, err }
+	if requiredNrWatchers > maxUserWatchers { // THINK: https://www.baeldung.com/linux/inotify-upper-limit-reached
+		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return &watcher, err }
 	}
 
 	const CloseWrite = "CLOSE_WRITE"

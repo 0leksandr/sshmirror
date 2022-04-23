@@ -326,6 +326,7 @@ func TestIntegration(t *testing.T) {
 					remoteDir:    remoteTarget,
 					identityFile: testConfig.IdentityFile,
 					connTimeout:  testConfig.TimeoutSeconds,
+					errorCmd:     testConfig.ErrorCmd,
 				})
 				client.SetLogger(logger)
 				client.onReady = func() {
