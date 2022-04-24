@@ -48,29 +48,29 @@ func filenameModificationChains() []TestModificationChain {
 		"\\\\\\\\'",
 		"\\\\\\\\\\'",
 	}
-	filenames := make([]TestFilename, 0, len(apostrophes))
+	filenames := make([]Filename, 0, len(apostrophes))
 	for i := 0; i <= len(apostrophes); i++ {
 		filenames = append(
 			filenames,
-			TestFilename("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗" + strings.Join(apostrophes[:i], "")),
+			Filename("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗" + strings.Join(apostrophes[:i], "")),
 		)
 	}
 	for i, filename := range filenames { filenames[i] = "./target/" + filename }
-	chains := []func(filename TestFilename) TestModificationChain{
-		func(filename TestFilename) TestModificationChain {
+	chains := []func(filename Filename) TestModificationChain{
+		func(filename Filename) TestModificationChain {
 			return TestModificationChain{after: TestModificationsList{TestSimpleModification{create(filename)}}}
 		},
-		func(filename TestFilename) TestModificationChain {
+		func(filename Filename) TestModificationChain {
 			return TestModificationChain{after: TestModificationsList{TestSimpleModification{write(filename)}}}
 		},
-		func(filename TestFilename) TestModificationChain {
+		func(filename Filename) TestModificationChain {
 			filename2 := filename + "$"
 			return TestModificationChain{
 				before: TestModificationsList{TestSimpleModification{create(filename2)}},
 				after: TestModificationsList{TestSimpleModification{move(filename2, filename)}},
 			}
 		},
-		func(filename TestFilename) TestModificationChain {
+		func(filename Filename) TestModificationChain {
 			return TestModificationChain{
 				before: TestModificationsList{TestSimpleModification{create(filename)}},
 				after: TestModificationsList{TestSimpleModification{remove(filename)}},

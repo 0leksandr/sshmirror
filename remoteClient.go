@@ -13,9 +13,9 @@ import (
 type RemoteClient interface {
 	io.Closer
 	LoggerAware
-	Upload(filenames []string) error
-	Delete(filenames []string) error
-	Move(from string, to string) error
+	Upload(filenames []Filename) error
+	Delete(filenames []Filename) error
+	Move(from Filename, to Filename) error
 	Ready() *Locker
 }
 
@@ -63,7 +63,7 @@ func (client *sshClient) Close() error {
 	_ = os.Remove(client.controlPath)
 	return nil
 }
-func (client *sshClient) Upload(filenames []string) error {
+func (client *sshClient) Upload(filenames []Filename) error {
 	if client.runCommand(
 		fmt.Sprintf(
 			"rsync --checksum --recursive --links --perms --times --group --owner --executability --compress --relative --rsh='%s' -- %s %s:%s",
@@ -79,7 +79,7 @@ func (client *sshClient) Upload(filenames []string) error {
 		return errors.New("could not upload") // MAYBE: actual error
 	}
 }
-func (client *sshClient) Delete(filenames []string) error {
+func (client *sshClient) Delete(filenames []Filename) error {
 	if client.runRemoteCommand(fmt.Sprintf(
 		"rm -rf -- %s", // MAYBE: something more reliable
 		strings.Join(escapeFilenames(filenames), " "),
@@ -89,11 +89,11 @@ func (client *sshClient) Delete(filenames []string) error {
 		return errors.New("cound not delete") // MAYBE: actual error
 	}
 }
-func (client *sshClient) Move(from string, to string) error {
+func (client *sshClient) Move(from Filename, to Filename) error {
 	if client.runRemoteCommand(fmt.Sprintf(
 		"mv -- %s %s",
-		wrapApostrophe(from),
-		wrapApostrophe(to),
+		from.Escaped(),
+		to.Escaped(),
 	)) {
 		return nil
 	} else {
@@ -164,21 +164,10 @@ func (client *sshClient) runRemoteCommand(command string) bool {
 	)
 }
 
-func escapeApostrophe(text string) string {
-	//text = strings.Replace(text, "\\", "\\\\", -1)
-	//text = strings.Replace(text, "'", "\\'", -1)
-	//return text
-
-	//return strings.Join(strings.Split(text, "'"), `'"'"'`)
-	return strings.Replace(text, "'", `'"'"'`, -1)
-}
-func wrapApostrophe(text string) string {
-	return fmt.Sprintf("'%s'", escapeApostrophe(text))
-}
-func escapeFilenames(filenames []string) []string {
+func escapeFilenames(filenames []Filename) []string {
 	escapedFilenames := make([]string, 0, len(filenames))
 	for _, filename := range filenames {
-		escapedFilenames = append(escapedFilenames, wrapApostrophe(filename))
+		escapedFilenames = append(escapedFilenames, filename.Escaped())
 	}
 	return escapedFilenames
 }

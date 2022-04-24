@@ -61,6 +61,14 @@ func (locker *Locker) Wait() {
 	locker.wg.Wait()
 }
 
+type Filename string
+func (filename Filename) Escaped() string {
+	return wrapApostrophe(string(filename))
+}
+func (filename Filename) Real() string {
+	return string(filename)
+}
+
 type Config struct {
 	// parameters
 	localDir   string
@@ -163,7 +171,7 @@ func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
 	}
 
 	if len(queue.deleted) > 0 {
-		deletedFilenames := make([]string, 0, len(queue.deleted))
+		deletedFilenames := make([]Filename, 0, len(queue.deleted))
 		for _, deleted := range queue.deleted { deletedFilenames = append(deletedFilenames, deleted.filename) }
 		if err := doSync(
 			manager.message(deletedFilenames, "-", "deleting"),
@@ -172,7 +180,7 @@ func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
 	}
 
 	if len(queue.moved) > 0 {
-		movedFilenames := make([]string, 0, len(queue.moved))
+		movedFilenames := make([]Filename, 0, len(queue.moved))
 		for _, moved := range queue.moved { movedFilenames = append(movedFilenames, moved.from) }
 		if err := doSync(
 			manager.message(movedFilenames, "^", "moving"),
@@ -186,7 +194,7 @@ func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
 	}
 
 	if len(queue.updated) > 0 {
-		updatedFilenames := make([]string, 0, len(queue.updated))
+		updatedFilenames := make([]Filename, 0, len(queue.updated))
 		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
 		if err := doSync(
 			manager.message(updatedFilenames, "+", "uploading"),
@@ -197,7 +205,7 @@ func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
 	return nil
 }
 func (manager RemoteManager) Fallback(queue UploadingModificationsQueue) { // MAYBE: legacy, remove
-	var files []string
+	var files []Filename
 	for _, updated := range queue.updated { files = append(files, updated.filename) }
 	for _, deleted := range queue.deleted { files = append(files, deleted.filename) }
 	for _, moved := range queue.moved {
@@ -207,24 +215,23 @@ func (manager RemoteManager) Fallback(queue UploadingModificationsQueue) { // MA
 
 	manager.fallbackFiles(files)
 }
-func (manager RemoteManager) fallbackFiles(files []string) {
+func (manager RemoteManager) fallbackFiles(files []Filename) {
 	client := manager.client
 	verbosity := manager.verbosity
-	filesUnique := make(map[string]interface{})
+	filesUnique := make(map[Filename]interface{})
 	for _, file := range files { filesUnique[file] = nil }
 
-	fileExists := func(filename string) bool {
-		_, err := os.Stat(filename)
+	fileExists := func(filename Filename) bool {
+		_, err := os.Stat(filename.Real())
 		return !os.IsNotExist(err)
 	}
-	escapeFile := wrapApostrophe
-	existing := make([]string, 0)
-	deleted := make([]string, 0)
+	existing := make([]Filename, 0)
+	deleted := make([]Filename, 0)
 	for file := range filesUnique {
-		if fileExists(manager.localDir + string(os.PathSeparator) + file) {
-			existing = append(existing, escapeFile(file))
+		if fileExists(Filename(manager.localDir + string(os.PathSeparator)) + file) {
+			existing = append(existing, file)
 		} else {
-			deleted = append(deleted, escapeFile(file))
+			deleted = append(deleted, file)
 		}
 	}
 
@@ -240,7 +247,9 @@ func (manager RemoteManager) fallbackFiles(files []string) {
 			} else {
 				uploadMessage = fmt.Sprintf("uploading %d file(s)", len(existing))
 				if verbosity == 3 {
-					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(existing, " "))
+					existingStr := make([]string, 0, len(existing))
+					for _, e := range existing { existingStr = append(existingStr, e.Real()) }
+					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(existingStr, " "))
 				}
 			}
 			result = stopwatch(
@@ -256,7 +265,9 @@ func (manager RemoteManager) fallbackFiles(files []string) {
 			} else {
 				uploadMessage = fmt.Sprintf("deleting %d file(s)", len(deleted))
 				if verbosity == 3 {
-					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(deleted, " "))
+					deletedStr := make([]string, 0, len(deleted))
+					for _, d := range deleted { deletedStr = append(deletedStr, d.Real()) }
+					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(deletedStr, " "))
 				}
 			}
 			result = stopwatch(
@@ -270,7 +281,7 @@ func (manager RemoteManager) fallbackFiles(files []string) {
 		manager.fallbackFiles(files)
 	}
 }
-func (manager RemoteManager) message(filenames []string, sign string, action string) string {
+func (manager RemoteManager) message(filenames []Filename, sign string, action string) string {
 	if manager.verbosity == 0 { return "" }
 	if manager.verbosity == 1 { return fmt.Sprintf("%s%d", sign, len(filenames)) }
 
@@ -279,7 +290,11 @@ func (manager RemoteManager) message(filenames []string, sign string, action str
 	if manager.verbosity == 2 {
 		return message
 	} else {
-		return message + ": " + strings.Join(filenames, " ")
+		filenamesStrings := make([]string, 0, len(filenames))
+		for _, filename := range filenames {
+			filenamesStrings = append(filenamesStrings, filename.Real())
+		}
+		return message + ": " + strings.Join(filenamesStrings, " ")
 	}
 }
 
@@ -316,6 +331,17 @@ func stripTrailSlash(path string) string {
 	last := len(path) - 1
 	if (len(path) > 0) && (path[last:] == string(os.PathSeparator) || path[last:] == "\\") { path = path[:last] }
 	return path
+}
+func escapeApostrophe(text string) string {
+	//text = strings.Replace(text, "\\", "\\\\", -1)
+	//text = strings.Replace(text, "'", "\\'", -1)
+	//return text
+
+	//return strings.Join(strings.Split(text, "'"), `'"'"'`)
+	return strings.Replace(text, "'", `'"'"'`, -1)
+}
+func wrapApostrophe(text string) string {
+	return fmt.Sprintf("'%s'", escapeApostrophe(text))
 }
 
 type SSHMirror struct {

@@ -43,8 +43,9 @@ func (FsnotifyWatcher) New(root string, exclude string) Watcher {
 	processEvent = func(event fsnotify.Event) {
 		if event.Op == 0 { return } // MAYBE: report? This is weird
 		if event.Op == fsnotify.Chmod { return }
-		filename := event.Name[len(root)+1:]
-		if ignored != nil && ignored.MatchString(filename) { return }
+		filenameString := event.Name[len(root)+1:]
+		if ignored != nil && ignored.MatchString(filenameString) { return }
+		filename := Filename(filenameString)
 
 		switch event.Op {
 			case fsnotify.Create, fsnotify.Write:
@@ -59,7 +60,7 @@ func (FsnotifyWatcher) New(root string, exclude string) Watcher {
 							if nextEvent.Op == fsnotify.Create { // MAYBE: check contents (checksums, modification times)
 								watcher.put(Moved{
 									from: filename,
-									to:   nextEvent.Name[len(root)+1:],
+									to:   Filename(nextEvent.Name[len(root)+1:]),
 								})
 							} else {
 								putDefault()
@@ -247,7 +248,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	var processEvent func(Event)
 	processEvent = func(event Event) {
 		watcher.logger.Debug("event", event)
-		filename := event.filename
+		filename := Filename(event.filename)
 		switch event.eventType {
 			case CloseWrite: put(Updated{filename})
 			case Delete: put(Deleted{filename})
@@ -259,7 +260,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 							if nextEvent.eventType == MovedTo {
 								put(Moved{
 									from: filename,
-									to:   nextEvent.filename,
+									to:   Filename(nextEvent.filename),
 								})
 							} else {
 								putDefault()

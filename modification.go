@@ -13,14 +13,14 @@ type Modification interface {
 // TODO: return `Created`, and improve created + instantly deleted cases
 
 type Updated struct { // any file, that must be uploaded // MAYBE: Written
-	filename string
+	filename Filename
 }
 type Deleted struct { // existing file, that was deleted
-	filename string
+	filename Filename
 }
 type Moved struct { // existing file, that was moved to a new location
-	from string
-	to   string
+	from Filename
+	to   Filename
 }
 func (updated Updated) Join(queue *ModificationsQueue) error {
 	addToQueue := true
@@ -148,7 +148,7 @@ func (queue *ModificationsQueue) AtomicAdd(modification Modification) error {
 func (queue *ModificationsQueue) Add(modification Modification) error {
 	return modification.Join(queue)
 }
-func (queue *ModificationsQueue) HasModifications(filename string) bool {
+func (queue *ModificationsQueue) HasModifications(filename Filename) bool {
 	for _, updated := range queue.updated {
 		if updated.filename == filename { return true }
 	}
@@ -215,7 +215,7 @@ func (queue *ModificationsQueue) optimize(localDir string) error {
 						queue.removeMoved(i)
 						// MAYBE: something smarter
 						var err2 error
-						for _, filename := range [2]string{movedI.from , movedJ.from} {
+						for _, filename := range [2]Filename{movedI.from , movedJ.from} {
 							if err3 := queue.Add(Updated{filename: filename}); err3 != nil { err2 = err3 }
 						}
 						return true, err2
