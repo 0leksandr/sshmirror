@@ -123,7 +123,9 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 		}
 		if previouslyMoved.to == moved.to {
 			queue.removeMoved(i)
-			if err := queue.Add(Deleted{filename: previouslyMoved.from}); err != nil { return err }
+			if !queue.HasModifications(previouslyMoved.from) {
+				if err := queue.Add(Deleted{filename: previouslyMoved.from}); err != nil { return err }
+			}
 		}
 	}
 	if addToQueue { queue.moved = append(queue.moved, moved) }
@@ -146,7 +148,7 @@ func (queue *ModificationsQueue) AtomicAdd(modification Modification) error {
 func (queue *ModificationsQueue) Add(modification Modification) error {
 	return modification.Join(queue)
 }
-func (queue *ModificationsQueue) HasModifications(filename string) bool { // TODO: remove
+func (queue *ModificationsQueue) HasModifications(filename string) bool {
 	for _, updated := range queue.updated {
 		if updated.filename == filename { return true }
 	}

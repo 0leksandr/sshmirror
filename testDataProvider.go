@@ -169,7 +169,7 @@ func remove(filename TestFilename) string {
 
 func basicModificationCases() []TestModificationCase {
 	return []TestModificationCase{
-		(func(a TestFilename, b TestFilename) TestModificationCase {
+		(func(a, b TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -198,7 +198,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, cExt TestFilename) TestModificationCase {
+		(func(a, b, cExt TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -237,7 +237,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(false)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationCase {
+		(func(a, b, c TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -271,7 +271,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename) TestModificationCase {
+		(func(a, b TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -313,7 +313,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename) TestModificationCase {
+		(func(a, b TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -352,7 +352,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationCase {
+		(func(a, b, c TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -397,7 +397,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationCase {
+		(func(a, b, c TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -436,7 +436,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, cExt TestFilename) TestModificationCase {
+		(func(a, b, cExt TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -464,7 +464,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(false)),
-		(func(a TestFilename, bExt TestFilename, cExt TestFilename) TestModificationCase {
+		(func(a, bExt, cExt TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -492,7 +492,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(false), generateFilename(false)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationCase {
+		(func(a, b, c TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -534,7 +534,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationCase {
+		(func(a, b, c TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -571,7 +571,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationCase {
+		(func(a, b, c TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -611,7 +611,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename, c TestFilename) TestModificationCase {
+		(func(a, b, c TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -654,7 +654,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, b TestFilename) TestModificationCase {
+		(func(a, b TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -685,7 +685,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true)),
-		(func(a TestFilename, bExt TestFilename) TestModificationCase {
+		(func(a, bExt TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -710,7 +710,7 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(false)),
-		(func(a TestFilename, bExt TestFilename, c TestFilename) TestModificationCase {
+		(func(a, bExt, c TestFilename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
@@ -743,5 +743,220 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(false), generateFilename(true)),
+		(func(a, b TestFilename) TestModificationCase { // group begin
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: TestModificationsList{
+						TestSimpleModification{write(a)},
+					},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, b)},
+						TestSimpleModification{write(a)}, // MAYBE: optional. Split unit and integration tests data
+						TestSimpleModification{write(b)}, // MAYBE: optional. Split unit and integration tests data
+					},
+				},
+				expectedModifications: []Modification{
+					Moved{
+						from: string(a),
+						to:   string(b),
+					},
+					Updated{filename: string(a)},
+					Updated{filename: string(b)},
+				},
+				expectedUploadingQueue: UploadingModificationsQueue{
+					updated: []Updated{
+						{filename: string(a)},
+						{filename: string(b)},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(true)),
+		(func(a, b TestFilename) TestModificationCase {
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: TestModificationsList{
+						TestSimpleModification{write(a)},
+					},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, b)},
+						TestSimpleModification{write(a)},
+					},
+				},
+				expectedModifications: []Modification{
+					Moved{
+						from: string(a),
+						to:   string(b),
+					},
+					Updated{filename: string(a)},
+				},
+				expectedUploadingQueue: UploadingModificationsQueue{
+					moved: []Moved{
+						{
+							from: string(a),
+							to:   string(b),
+						},
+					},
+					updated: []Updated{
+						{filename: string(a)},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(true)),
+		(func(a, b TestFilename) TestModificationCase {
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: TestModificationsList{
+						TestSimpleModification{write(a)},
+					},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, b)},
+						TestSimpleModification{write(b)},
+					},
+				},
+				expectedModifications: []Modification{
+					Moved{
+						from: string(a),
+						to:   string(b),
+					},
+					Updated{filename: string(b)},
+				},
+				expectedUploadingQueue: UploadingModificationsQueue{
+					updated: []Updated{
+						{filename: string(b)},
+					},
+					deleted: []Deleted{
+						{filename: string(a)},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(true)), // group end
+		(func(a, b TestFilename) TestModificationCase { // group begin
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: TestModificationsList{
+						TestSimpleModification{write(a)},
+					},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, b)},
+						TestSimpleModification{write(a)}, // MAYBE: optional
+						TestSimpleModification{remove(b)},
+					},
+				},
+				expectedModifications: []Modification{
+					Moved{
+						from: string(a),
+						to:   string(b),
+					},
+					Updated{string(a)},
+					Deleted{string(b)},
+				},
+				expectedUploadingQueue: UploadingModificationsQueue{
+					updated: []Updated{
+						{filename: string(a)},
+					},
+					deleted: []Deleted{
+						{filename: string(b)},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(true)),
+		(func(a, b TestFilename) TestModificationCase {
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: TestModificationsList{
+						TestSimpleModification{write(a)},
+					},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, b)},
+						TestSimpleModification{remove(b)},
+					},
+				},
+				expectedModifications: []Modification{
+					Moved{
+						from: string(a),
+						to:   string(b),
+					},
+					Deleted{string(b)},
+				},
+				expectedUploadingQueue: UploadingModificationsQueue{
+					deleted: []Deleted{
+						{filename: string(a)},
+						{filename: string(b)},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(true)), // group end
+		(func(a, b, c TestFilename) TestModificationCase { // group begin
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: TestModificationsList{
+						TestSimpleModification{write(a)},
+						TestSimpleModification{write(c)},
+					},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, b)},
+						TestSimpleModification{write(a)}, // MAYBE: optional
+						TestSimpleModification{move(c, b)},
+					},
+				},
+				expectedModifications: []Modification{
+					Moved{
+						from: string(a),
+						to:   string(b),
+					},
+					Updated{filename: string(a)},
+					Moved{
+						from: string(c),
+						to:   string(b),
+					},
+				},
+				expectedUploadingQueue: UploadingModificationsQueue{
+					updated: []Updated{
+						{filename: string(a)},
+					},
+					moved: []Moved{
+						{
+							from: string(c),
+							to:   string(b),
+						},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a, b, c TestFilename) TestModificationCase {
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: TestModificationsList{
+						TestSimpleModification{write(a)},
+						TestSimpleModification{write(c)},
+					},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, b)},
+						TestSimpleModification{move(c, b)},
+					},
+				},
+				expectedModifications: []Modification{
+					Moved{
+						from: string(a),
+						to:   string(b),
+					},
+					Moved{
+						from: string(c),
+						to:   string(b),
+					},
+				},
+				expectedUploadingQueue: UploadingModificationsQueue{
+					deleted: []Deleted{
+						{filename: string(a)},
+					},
+					moved: []Moved{
+						{
+							from: string(c),
+							to:   string(b),
+						},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(true), generateFilename(true)), // group end
 	}
 }
