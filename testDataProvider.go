@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"regexp"
 )
 
 const MovementCleanup = "sleep 0.003" // MAYBE: come up with something better
@@ -33,14 +32,8 @@ func (modification TestVariantsModification) commandVariants() []string {
 }
 
 type TestScenario struct {
-	before []string
-	after  []string
-}
-func (scenario TestScenario) applyTarget(targetId int) { // TODO: remove
-	reg := regexp.MustCompile("\\[target]")
-	target := fmt.Sprintf("target%d", targetId)
-	for i, command := range scenario.before { scenario.before[i] = reg.ReplaceAllString(command, target) }
-	for i, command := range scenario.after { scenario.after[i] = reg.ReplaceAllString(command, target) }
+	before []Filename
+	after  []string // MAYBE: type CommandString
 }
 
 type TestModificationsList []TestModificationInterface
@@ -76,27 +69,23 @@ func (modifications TestModificationsList) commandsVariants() [][]string {
 	return variants
 }
 
-type TestModificationChain struct { // TODO: rename!
-	before TestModificationsList // TODO: filenames list
+type TestModificationChain struct { // MAYBE: rename
+	before []Filename // MAYBE: split required and optional
 	after  TestModificationsList
 }
 func (chain TestModificationChain) scenarios() []TestScenario {
-	variantsBefore := chain.before.commandsVariants()
-	if len(variantsBefore) == 0 { variantsBefore = [][]string{{""}} }
 	variantsAfter := chain.after.commandsVariants()
-	scenarios := make([]TestScenario, 0, len(variantsBefore) * len(variantsAfter))
-	for _, before := range variantsBefore {
-		for _, after := range variantsAfter {
-			//copyBefore := make([]string, len(before))
-			//copy(copyBefore, before)
-			//copyAfter := make([]string, len(after))
-			//copy(copyAfter, after)
+	scenarios := make([]TestScenario, 0, len(variantsAfter))
+	for _, after := range variantsAfter {
+		//copyBefore := make([]string, len(before))
+		//copy(copyBefore, before)
+		//copyAfter := make([]string, len(after))
+		//copy(copyAfter, after)
 
-			scenarios = append(scenarios, TestScenario{
-				before: before,
-				after:  after,
-			})
-		}
+		scenarios = append(scenarios, TestScenario{
+			before: chain.before,
+			after:  after,
+		})
 	}
 	return scenarios
 }
@@ -167,10 +156,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-						TestSimpleModification{write(b)},
-					},
+					before: []Filename{a, b},
 					after: TestModificationsList{
 						TestSimpleModification{remove(a)},
 						TestSimpleModification{move(b, a)},
@@ -196,13 +182,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, cExt Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							"",
-							create(b),
-							write(b),
-						}},
-					},
+					before: []Filename{b},
 					after: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
@@ -235,9 +215,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{create(a)},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{move(b, c)},
@@ -269,17 +247,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							create(a),
-							write(a),
-						}},
-						TestVariantsModification{[]string{
-							"",
-							create(b),
-							write(b),
-						}},
-					},
+					before: []Filename{a, b},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestVariantsModification{[]string{
@@ -311,17 +279,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							create(a),
-							write(a),
-						}},
-						TestVariantsModification{[]string{
-							"",
-							create(b),
-							write(b),
-						}},
-					},
+					before: []Filename{a, b},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{write(b)},
@@ -350,18 +308,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							create(a),
-							write(a),
-						}},
-						TestVariantsModification{[]string{
-							"",
-							create(b),
-							write(b),
-						}},
-						TestSimpleModification{write(c)},
-					},
+					before: []Filename{a, b, c},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{write(b)},
@@ -395,11 +342,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-						TestSimpleModification{write(b)},
-						TestOptionalModification{write(c)},
-					},
+					before: []Filename{a, b, c},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, c)},
 						TestSimpleModification{move(b, a)},
@@ -434,9 +377,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, cExt Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, cExt)},
 						TestVariantsModification{[]string{
@@ -462,12 +403,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, bExt, cExt Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						//TestOptionalModification{write(a)}, // MAYBE: find a normal way to test, and uncomment
-						TestSimpleModification{write(a)},
-						TestSimpleModification{write(bExt)},
-						TestSimpleModification{write(cExt)},
-					},
+					before: []Filename{a, bExt, cExt}, // MAYBE: find a normal way to test, and remove `a` (or make it optional)
 					after: TestModificationsList{
 						TestSimpleModification{move(bExt, a)},
 						TestOptionalModification{write(a)},
@@ -490,16 +426,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							create(a),
-							write(a),
-						}},
-						TestVariantsModification{[]string{
-							create(b),
-							write(b),
-						}},
-					},
+					before: []Filename{a, b},
 					after: TestModificationsList{
 						TestSimpleModification{move(b, c)},
 						TestSimpleModification{move(a, b)},
@@ -532,10 +459,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-						TestSimpleModification{write(b)},
-					},
+					before: []Filename{a, b},
 					after: TestModificationsList{
 						TestSimpleModification{move(b, c)},
 						TestSimpleModification{move(a, b)},
@@ -569,10 +493,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-						TestSimpleModification{write(b)},
-					},
+					before: []Filename{a, b},
 					after: TestModificationsList{
 						TestSimpleModification{move(b, c)},
 						TestSimpleModification{move(a, b)},
@@ -609,20 +530,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							create(a),
-							write(a),
-						}},
-						TestVariantsModification{[]string{
-							create(b),
-							write(b),
-						}},
-						TestVariantsModification{[]string{
-							create(c),
-							write(c),
-						}},
-					},
+					before: []Filename{a, b, c},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{move(b, c)},
@@ -652,12 +560,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							create(a),
-							write(a),
-						}},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{move(b, a)},
@@ -683,12 +586,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, bExt Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							create(a),
-							write(a),
-						}},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, bExt)},
 						TestSimpleModification{move(bExt, a)},
@@ -708,17 +606,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, bExt, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestVariantsModification{[]string{
-							create(a),
-							write(a),
-						}},
-						TestVariantsModification{[]string{
-							"",
-							create(c),
-							write(c),
-						}},
-					},
+					before: []Filename{a, c},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, bExt)},
 						TestSimpleModification{move(bExt, c)},
@@ -741,9 +629,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase { // group begin
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{write(a)}, // MAYBE: optional. Split unit and integration tests data
@@ -769,9 +655,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{write(a)},
@@ -800,9 +684,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{write(b)},
@@ -828,9 +710,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase { // group begin
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{write(a)}, // MAYBE: optional
@@ -858,9 +738,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-					},
+					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{remove(b)},
@@ -884,10 +762,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase { // group begin
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-						TestSimpleModification{write(c)},
-					},
+					before: []Filename{a, c},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{write(a)}, // MAYBE: optional
@@ -921,10 +796,7 @@ func basicModificationCases() []TestModificationCase {
 		(func(a, b, c Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: TestModificationsList{
-						TestSimpleModification{write(a)},
-						TestSimpleModification{write(c)},
-					},
+					before: []Filename{a, c},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestSimpleModification{move(c, b)},

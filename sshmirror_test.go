@@ -66,13 +66,13 @@ func filenameModificationChains() []TestModificationChain {
 		func(filename Filename) TestModificationChain {
 			filename2 := filename + "$"
 			return TestModificationChain{
-				before: TestModificationsList{TestSimpleModification{create(filename2)}},
+				before: []Filename{filename2},
 				after: TestModificationsList{TestSimpleModification{move(filename2, filename)}},
 			}
 		},
 		func(filename Filename) TestModificationChain {
 			return TestModificationChain{
-				before: TestModificationsList{TestSimpleModification{create(filename)}},
+				before: []Filename{filename},
 				after: TestModificationsList{TestSimpleModification{remove(filename)}},
 			}
 		},
@@ -108,7 +108,7 @@ func modificationChains() []TestModificationChain {
 	}
 	var masterChain TestModificationChain
 	for _, testCase := range basicCases {
-		masterChain.before = append(masterChain.before, simplify(testCase.chain.before)...)
+		masterChain.before = append(masterChain.before, testCase.chain.before...)
 		masterChain.after = append(masterChain.after, simplify(testCase.chain.after)...)
 	}
 	for _, delaySeconds := range delaysMaster {
@@ -433,15 +433,15 @@ func TestIntegration(t *testing.T) {
 
 				//scenario.applyTarget(processId)
 
-				for _, command := range scenario.before {
-					logger.Debug("command.before", command)
+				for _, before := range scenario.before {
+					logger.Debug("file.before", before)
 
-					if command != "" {
+					if before != "" {
 						if !testConfig.IntegrationTest { syncing.Lock() }
 
 						my.RunCommand(
 							localSandbox,
-							command,
+							write(before),
 							nil,
 							func(err string) { panic(err) },
 						)
