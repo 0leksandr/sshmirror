@@ -59,7 +59,7 @@ func filenameModificationChains() []TestModificationChain {
 			return TestModificationChain{after: TestModificationsList{TestSimpleModification{create(filename)}}}
 		},
 		func(filename TestFilename) TestModificationChain {
-			return TestModificationChain{after: TestModificationsList{TestSimpleModification{write(filename, 10)}}}
+			return TestModificationChain{after: TestModificationsList{TestSimpleModification{write(filename)}}}
 		},
 		func(filename TestFilename) TestModificationChain {
 			filename2 := filename + "$"
@@ -391,7 +391,7 @@ func TestIntegration(t *testing.T) {
 							"find . \\( -type f -o -type d \\) -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a'",
 							hashCmd,
 							"tree ../..",
-							"cat -- *",
+							"find . -type f -printf \"%p:\" -exec cat {} \\; | LC_ALL=C sort", // MAYBE: fix `cat`'ing empty files
 						} {
 							local := make([]string, 0)
 							my.RunCommand(
@@ -404,7 +404,22 @@ func TestIntegration(t *testing.T) {
 							logger.Debug("cmd", cmd)
 							logger.Debug("local", local)
 							logger.Debug("remote", remote)
-							logger.Debug("equal", reflect.DeepEqual(local, remote))
+							equal := reflect.DeepEqual(local, remote)
+							logger.Debug("equal", equal)
+							if !equal {
+								var diff []string
+								my.RunCommand(
+									"",
+									fmt.Sprintf(
+										"bash -c 'diff <(echo \"%s\") <(echo \"%s\")'",
+										strings.Join(local, "\n"),
+										strings.Join(remote, "\n"),
+									),
+									func(out string) { diff = append(diff, out) },
+									func(err string) { panic(err) },
+								)
+								logger.Debug("diff", diff)
+							}
 						}
 						if testConfig.StopOnFail {
 							my.Dump("logs:")

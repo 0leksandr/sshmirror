@@ -105,6 +105,14 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 			// TODO: think about
 		}
 		if previouslyMoved.to == moved.from {
+			//triangularMove := false // TODO: uncomment and test modifying files within triangle
+			//for i2, previouslyMoved2 := range queue.moved {
+			//	if previouslyMoved2.from == moved.to {
+			//		if i != i2 { triangularMove = true }
+			//	}
+			//}
+			//if !triangularMove {
+			//}
 			if previouslyMoved.from == moved.to {
 				queue.removeMoved(i)
 			} else {
@@ -115,9 +123,7 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 		}
 		if previouslyMoved.to == moved.to {
 			queue.removeMoved(i)
-			if !queue.HasModifications(previouslyMoved.from) {
-				if err := queue.Add(Deleted{filename: previouslyMoved.from}); err != nil { return err }
-			}
+			if err := queue.Add(Deleted{filename: previouslyMoved.from}); err != nil { return err }
 		}
 	}
 	if addToQueue { queue.moved = append(queue.moved, moved) }
@@ -140,7 +146,7 @@ func (queue *ModificationsQueue) AtomicAdd(modification Modification) error {
 func (queue *ModificationsQueue) Add(modification Modification) error {
 	return modification.Join(queue)
 }
-func (queue *ModificationsQueue) HasModifications(filename string) bool {
+func (queue *ModificationsQueue) HasModifications(filename string) bool { // TODO: remove
 	for _, updated := range queue.updated {
 		if updated.filename == filename { return true }
 	}
@@ -194,7 +200,7 @@ func (queue *ModificationsQueue) copy() ModificationsQueue {
 }
 func (queue *ModificationsQueue) optimize(localDir string) error {
 	// check for circular move
-	removedCircular := true
+	removedCircular := true // TODO: remove after triangular move is uncommented
 	for removedCircular {
 		var err error
 		removedCircular, err = (func() (bool, error) {

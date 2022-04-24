@@ -66,7 +66,7 @@ func (client *sshClient) Close() error {
 func (client *sshClient) Upload(filenames []string) error {
 	if client.runCommand(
 		fmt.Sprintf(
-			"rsync -azER -e '%s' -- %s %s:%s",
+			"rsync --checksum --recursive --links --perms --times --group --owner --executability --compress --relative --rsh='%s' -- %s %s:%s",
 			client.sshCmd,
 			strings.Join(escapeFilenames(filenames), " "),
 			client.config.remoteHost,

@@ -23,7 +23,7 @@ import (
 // TODO: ignore special types of files (pipes, block devices etc.)
 // TODO: support directories
 // TODO: support scp without rsync
-// TODO: multiple files movements with one command (but preserve order of "chained" movements)
+// TODO: multiple files movements with one command (with preserved order)
 // MAYBE: support symlinks
 // MAYBE: automatically adjust timeout based on server response rate
 // MAYBE: copy permissions

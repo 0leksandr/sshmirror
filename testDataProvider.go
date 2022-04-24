@@ -155,9 +155,10 @@ func generateFilename(inTarget bool) TestFilename {
 func create(filename TestFilename) string { // MAYBE: touch
 	return fmt.Sprintf("touch %s", filename.escaped())
 }
-func write(filename TestFilename, size int) string {
-	// TODO: guarantee uniqueness
-	return fmt.Sprintf("cat /dev/urandom |head -c %d > %s", size, filename.escaped())
+var contentIndex = 0
+func write(filename TestFilename) string {
+	contentIndex++
+	return fmt.Sprintf("echo %d > %s", contentIndex, filename.escaped())
 }
 func move(from TestFilename, to TestFilename) string {
 	return fmt.Sprintf("mv %s %s", from.escaped(), to.escaped())
@@ -172,8 +173,8 @@ func basicModificationCases() []TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
-						TestSimpleModification{write(a, 10)},
-						TestSimpleModification{write(b, 11)},
+						TestSimpleModification{write(a)},
+						TestSimpleModification{write(b)},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{remove(a)},
@@ -204,13 +205,13 @@ func basicModificationCases() []TestModificationCase {
 						TestVariantsModification{[]string{
 							"",
 							create(b),
-							write(b, 10),
+							write(b),
 						}},
 					},
 					after: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 11),
+							write(a),
 						}},
 						TestSimpleModification{move(a, b)},
 						TestVariantsModification{[]string{
@@ -276,19 +277,19 @@ func basicModificationCases() []TestModificationCase {
 					before: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 10),
+							write(a),
 						}},
 						TestVariantsModification{[]string{
 							"",
 							create(b),
-							write(b, 11),
+							write(b),
 						}},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 14),
+							write(a),
 						}},
 					},
 				},
@@ -318,20 +319,20 @@ func basicModificationCases() []TestModificationCase {
 					before: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 10),
+							write(a),
 						}},
 						TestVariantsModification{[]string{
 							"",
 							create(b),
-							write(b, 11),
+							write(b),
 						}},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(b, 13)},
+						TestSimpleModification{write(b)},
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 14),
+							write(a),
 						}},
 					},
 				},
@@ -357,18 +358,18 @@ func basicModificationCases() []TestModificationCase {
 					before: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 10),
+							write(a),
 						}},
 						TestVariantsModification{[]string{
 							"",
 							create(b),
-							write(b, 11),
+							write(b),
 						}},
-						TestSimpleModification{write(c, 12)},
+						TestSimpleModification{write(c)},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(b, 13)},
+						TestSimpleModification{write(b)},
 						TestSimpleModification{move(c, a)},
 					},
 				},
@@ -400,9 +401,9 @@ func basicModificationCases() []TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
-						TestSimpleModification{write(a, 10)},
-						TestSimpleModification{write(b, 11)},
-						TestOptionalModification{write(c, 12)},
+						TestSimpleModification{write(a)},
+						TestSimpleModification{write(b)},
+						TestOptionalModification{write(c)},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, c)},
@@ -439,13 +440,13 @@ func basicModificationCases() []TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
-						TestSimpleModification{write(a, 10)},
+						TestSimpleModification{write(a)},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, cExt)},
 						TestVariantsModification{[]string{
 							create(b),
-							write(b, 11),
+							write(b),
 						}},
 					},
 				},
@@ -467,14 +468,14 @@ func basicModificationCases() []TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
-						//TestOptionalModification{write(a, 10)}, // MAYBE: find a normal way to test, and uncomment
-						TestSimpleModification{write(a, 10)},
-						TestSimpleModification{write(bExt, 11)},
-						TestSimpleModification{write(cExt, 12)},
+						//TestOptionalModification{write(a)}, // MAYBE: find a normal way to test, and uncomment
+						TestSimpleModification{write(a)},
+						TestSimpleModification{write(bExt)},
+						TestSimpleModification{write(cExt)},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{move(bExt, a)},
-						TestOptionalModification{write(a, 13)},
+						TestOptionalModification{write(a)},
 						TestSimpleModification{move(a, cExt)},
 						TestSimpleModification{MovementCleanup},
 					},
@@ -497,11 +498,11 @@ func basicModificationCases() []TestModificationCase {
 					before: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 10),
+							write(a),
 						}},
 						TestVariantsModification{[]string{
 							create(b),
-							write(b, 10),
+							write(b),
 						}},
 					},
 					after: TestModificationsList{
@@ -537,13 +538,13 @@ func basicModificationCases() []TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
-						TestSimpleModification{write(a, 10)},
-						TestSimpleModification{write(b, 11)},
+						TestSimpleModification{write(a)},
+						TestSimpleModification{write(b)},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{move(b, c)},
 						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(c, 12)},
+						TestSimpleModification{write(c)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -574,13 +575,13 @@ func basicModificationCases() []TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: TestModificationsList{
-						TestSimpleModification{write(a, 10)},
-						TestSimpleModification{write(b, 11)},
+						TestSimpleModification{write(a)},
+						TestSimpleModification{write(b)},
 					},
 					after: TestModificationsList{
 						TestSimpleModification{move(b, c)},
 						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(b, 13)},
+						TestSimpleModification{write(b)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -616,15 +617,15 @@ func basicModificationCases() []TestModificationCase {
 					before: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 10),
+							write(a),
 						}},
 						TestVariantsModification{[]string{
 							create(b),
-							write(b, 11),
+							write(b),
 						}},
 						TestVariantsModification{[]string{
 							create(c),
-							write(c, 12),
+							write(c),
 						}},
 					},
 					after: TestModificationsList{
@@ -659,7 +660,7 @@ func basicModificationCases() []TestModificationCase {
 					before: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 10),
+							write(a),
 						}},
 					},
 					after: TestModificationsList{
@@ -690,7 +691,7 @@ func basicModificationCases() []TestModificationCase {
 					before: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 10),
+							write(a),
 						}},
 					},
 					after: TestModificationsList{
@@ -715,12 +716,12 @@ func basicModificationCases() []TestModificationCase {
 					before: TestModificationsList{
 						TestVariantsModification{[]string{
 							create(a),
-							write(a, 10),
+							write(a),
 						}},
 						TestVariantsModification{[]string{
 							"",
 							create(c),
-							write(c, 11),
+							write(c),
 						}},
 					},
 					after: TestModificationsList{
