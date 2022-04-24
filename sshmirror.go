@@ -23,7 +23,6 @@ import (
 // TODO: ignore special types of files (pipes, block devices etc.)
 // TODO: support directories
 // TODO: support scp without rsync
-// TODO: multiple files movements with one command (with preserved order)
 // MAYBE: support symlinks
 // MAYBE: automatically adjust timeout based on server response rate
 // MAYBE: copy permissions
@@ -175,7 +174,7 @@ func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
 		for _, deleted := range queue.deleted { deletedFilenames = append(deletedFilenames, deleted.filename) }
 		if err := doSync(
 			manager.message(deletedFilenames, "-", "deleting"),
-			func() error { return manager.client.Delete(deletedFilenames) },
+			func() error { return manager.client.Delete(queue.deleted) },
 		); err != nil { return err }
 	}
 
@@ -184,12 +183,7 @@ func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
 		for _, moved := range queue.moved { movedFilenames = append(movedFilenames, moved.from) }
 		if err := doSync(
 			manager.message(movedFilenames, "^", "moving"),
-			func() error {
-				for _, moved := range queue.moved {
-					if err := manager.client.Move(moved.from, moved.to); err != nil { return err }
-				}
-				return nil
-			},
+			func() error { return manager.client.Move(queue.moved) },
 		); err != nil { return err }
 	}
 
@@ -198,7 +192,7 @@ func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
 		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
 		if err := doSync(
 			manager.message(updatedFilenames, "+", "uploading"),
-			func() error { return manager.client.Upload(updatedFilenames) },
+			func() error { return manager.client.Update(queue.updated) },
 		); err != nil { return err }
 	}
 
@@ -225,36 +219,36 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 		_, err := os.Stat(filename.Real())
 		return !os.IsNotExist(err)
 	}
-	existing := make([]Filename, 0)
-	deleted := make([]Filename, 0)
+	updated := make([]Updated, 0)
+	deleted := make([]Deleted, 0)
 	for file := range filesUnique {
 		if fileExists(Filename(manager.localDir + string(os.PathSeparator)) + file) {
-			existing = append(existing, file)
+			updated = append(updated, Updated{filename: file})
 		} else {
-			deleted = append(deleted, file)
+			deleted = append(deleted, Deleted{filename: file})
 		}
 	}
 
 	result := true
 	if verbosity == 0 {
-		if len(existing) > 0 { result = result && (client.Upload(existing) == nil) }
+		if len(updated) > 0 { result = result && (client.Update(updated) == nil) }
 		if len(deleted) > 0 { result = result && (client.Delete(deleted) == nil) }
 	} else {
-		if len(existing) > 0 {
+		if len(updated) > 0 {
 			var uploadMessage string
 			if verbosity == 1 {
-				uploadMessage = fmt.Sprintf("+%d", len(existing))
+				uploadMessage = fmt.Sprintf("+%d", len(updated))
 			} else {
-				uploadMessage = fmt.Sprintf("uploading %d file(s)", len(existing))
+				uploadMessage = fmt.Sprintf("uploading %d file(s)", len(updated))
 				if verbosity == 3 {
-					existingStr := make([]string, 0, len(existing))
-					for _, e := range existing { existingStr = append(existingStr, e.Real()) }
+					existingStr := make([]string, 0, len(updated))
+					for _, u := range updated { existingStr = append(existingStr, u.filename.Real()) }
 					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(existingStr, " "))
 				}
 			}
 			result = stopwatch(
 				uploadMessage,
-				func() error { return client.Upload(existing) },
+				func() error { return client.Update(updated) },
 			) == nil
 		}
 
@@ -266,7 +260,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 				uploadMessage = fmt.Sprintf("deleting %d file(s)", len(deleted))
 				if verbosity == 3 {
 					deletedStr := make([]string, 0, len(deleted))
-					for _, d := range deleted { deletedStr = append(deletedStr, d.Real()) }
+					for _, d := range deleted { deletedStr = append(deletedStr, d.filename.Real()) }
 					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(deletedStr, " "))
 				}
 			}

@@ -13,9 +13,9 @@ import (
 type RemoteClient interface {
 	io.Closer
 	LoggerAware
-	Upload(filenames []Filename) error
-	Delete(filenames []Filename) error
-	Move(from Filename, to Filename) error
+	Update([]Updated) error
+	Delete([]Deleted) error
+	Move([]Moved) error
 	Ready() *Locker
 }
 
@@ -63,12 +63,17 @@ func (client *sshClient) Close() error {
 	_ = os.Remove(client.controlPath)
 	return nil
 }
-func (client *sshClient) Upload(filenames []Filename) error {
+func (client *sshClient) Update(updated []Updated) error {
+	escapedFilenames := make([]string, 0, len(updated))
+	for _, modification := range updated {
+		escapedFilenames = append(escapedFilenames, modification.filename.Escaped())
+	}
+
 	if client.runCommand(
 		fmt.Sprintf(
 			"rsync --checksum --recursive --links --perms --times --group --owner --executability --compress --relative --rsh='%s' -- %s %s:%s",
 			client.sshCmd,
-			strings.Join(escapeFilenames(filenames), " "),
+			strings.Join(escapedFilenames, " "),
 			client.config.remoteHost,
 			client.config.remoteDir,
 		),
@@ -79,22 +84,32 @@ func (client *sshClient) Upload(filenames []Filename) error {
 		return errors.New("could not upload") // MAYBE: actual error
 	}
 }
-func (client *sshClient) Delete(filenames []Filename) error {
+func (client *sshClient) Delete(deleted []Deleted) error {
+	escapedFilenames := make([]string, 0, len(deleted))
+	for _, modification := range deleted {
+		escapedFilenames = append(escapedFilenames, modification.filename.Escaped())
+	}
+
 	if client.runRemoteCommand(fmt.Sprintf(
 		"rm -rf -- %s", // MAYBE: something more reliable
-		strings.Join(escapeFilenames(filenames), " "),
+		strings.Join(escapedFilenames, " "),
 	)) {
 		return nil
 	} else {
 		return errors.New("cound not delete") // MAYBE: actual error
 	}
 }
-func (client *sshClient) Move(from Filename, to Filename) error {
-	if client.runRemoteCommand(fmt.Sprintf(
-		"mv -- %s %s",
-		from.Escaped(),
-		to.Escaped(),
-	)) {
+func (client *sshClient) Move(moved []Moved) error {
+	commands := make([]string, 0, len(moved))
+	for _, modification := range moved {
+		commands = append(commands, fmt.Sprintf(
+			"mv -- %s %s",
+			modification.from.Escaped(),
+			modification.to.Escaped(),
+		))
+	}
+
+	if client.runRemoteCommand(strings.Join(commands, " && ")) {
 		return nil
 	} else {
 		return errors.New("could not move") // MAYBE: actual error
@@ -162,12 +177,4 @@ func (client *sshClient) runRemoteCommand(command string) bool {
 		),
 		nil,
 	)
-}
-
-func escapeFilenames(filenames []Filename) []string {
-	escapedFilenames := make([]string, 0, len(filenames))
-	for _, filename := range filenames {
-		escapedFilenames = append(escapedFilenames, filename.Escaped())
-	}
-	return escapedFilenames
 }
