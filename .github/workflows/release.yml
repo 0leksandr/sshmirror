@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag name, e.g. v1.0.0
+        description: Tag name, f.e. v1.0.0
         required: true
 
 jobs:
@@ -18,6 +18,14 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: ${{ steps.go-version.outputs.minimal }}
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
       - name: Build
         run: ./build.sh
       - name: Release
