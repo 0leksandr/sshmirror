@@ -1,3 +1,7 @@
+<p align="center">
+  <a href="https://stand-with-ukraine.pp.ua" title="#StandWithUkraine"><img alt="#StandWithUkraine" src="https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg"></a>
+</p>
+
 #### Synopsis:
 [Download](https://github.com/0leksandr/sshmirror/releases/latest)
 ```shell script
