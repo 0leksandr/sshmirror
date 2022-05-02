@@ -33,3 +33,4 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag }}
           files: dist/*
+          token: ${{ secrets.WORKFLOW_RELEASE_TOKEN }}

@@ -65,7 +65,7 @@ func (logger *InMemoryLogger) Print() {
 	logger.mutex.Unlock()
 }
 func (logger *InMemoryLogger) log(text string) {
-	log := my.Trace(false)[2]
+	log := my.Trace(false)[2].String()
 	if logger.timestamps { log += ": " + time.Now().String() }
 	log += "\n" + text
 	logger.logs = append(logger.logs, log)

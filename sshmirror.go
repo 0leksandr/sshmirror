@@ -28,7 +28,6 @@ import (
 // MAYBE: copy permissions
 // MAYBE: copy files metadata (creation time etc.)
 // MAYBE: upload new files with scp
-// MAYBE: test that all interfaces are correctly implemented
 
 var Must = my.Must
 var PanicIf = my.PanicIf
