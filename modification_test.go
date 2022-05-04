@@ -11,13 +11,12 @@ func TestModificationsQueue_Flush(t *testing.T) {
 		for _, modification := range testCase.expectedModifications {
 			Must(queue.Add(modification))
 		}
-		uploadingModificationsQueue, err := queue.Flush("")
+		uploadingModificationsQueue, err := queue.Flush()
 		PanicIf(err)
-		if !uploadingModificationsQueue.Equals(testCase.expectedUploadingQueue) {
-			my.Dump2(i, testCase)
-			my.Dump2(testCase.expectedUploadingQueue)
-			my.Dump2(uploadingModificationsQueue)
-			t.Fail()
-		}
+		my.Assert(
+			t,
+			uploadingModificationsQueue.Equals(testCase.expectedUploadingQueue),
+			i, testCase, testCase.expectedUploadingQueue, uploadingModificationsQueue,
+		)
 	}
 }

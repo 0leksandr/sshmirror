@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/0leksandr/my.go"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"os/user"
@@ -28,6 +29,7 @@ import (
 // MAYBE: copy permissions
 // MAYBE: copy files metadata (creation time etc.)
 // MAYBE: upload new files with scp
+// MAYBE: force rsync upload, disable --checksum
 
 var Must = my.Must
 var PanicIf = my.PanicIf
@@ -65,6 +67,23 @@ func (filename Filename) Escaped() string {
 }
 func (filename Filename) Real() string {
 	return string(filename)
+}
+
+type FileSize struct {
+	megabytes uint64
+	bytes     uint64
+}
+func (fileSize FileSize) Bytes() uint64 {
+	return fileSize.megabytes * 1 << 20 + fileSize.bytes
+}
+func (fileSize FileSize) Add(other FileSize) FileSize {
+	return FileSize{
+		megabytes: fileSize.megabytes + other.megabytes,
+		bytes:     fileSize.bytes + other.bytes,
+	}
+}
+func (fileSize FileSize) IsLess(other FileSize) bool {
+	return fileSize.Bytes() < other.Bytes()
 }
 
 type Config struct {
@@ -340,7 +359,7 @@ func wrapApostrophe(text string) string {
 type SSHMirror struct {
 	io.Closer
 	LoggerAware
-	root    string
+	root    string // TODO: Filename
 	watcher Watcher
 	remote  RemoteManager
 	logger  Logger
@@ -403,6 +422,84 @@ func (client *SSHMirror) SetLogger(logger Logger) {
 	client.logger = logger
 	client.remote.SetLogger(logger)
 }
+func (client *SSHMirror) Init(batchSize FileSize) error {
+	// MAYBE: progress indicator
+
+	synced := make(map[Filename]bool)
+
+	modified := func(Filename) {}
+	notSynced := func(filename Filename) {
+		modified(filename)
+		delete(synced, filename)
+	}
+
+	go func() {
+		for {
+			select {
+				case modification, ok := <-client.watcher.Modifications():
+					if !ok { panic("modifications channel closed") }
+					switch modification.(type) { // TODO: something smarter
+						case Updated:
+							notSynced(modification.(Updated).filename)
+						case Deleted: // PRIORITY: handle directories
+							notSynced(modification.(Deleted).filename)
+						case Moved: // PRIORITY: handle directories
+							notSynced(modification.(Moved).from)
+							notSynced(modification.(Moved).to)
+						default:
+							panic("unknown modification type")
+					}
+			}
+		}
+	}()
+
+	upload := func(batch map[Filename]bool) {
+		modified = func(filename Filename) { delete(batch, filename) }
+		defer func() { modified = func(Filename) {} }()
+
+		updated := make([]Updated, 0, len(batch))
+		for filename := range batch { updated = append(updated, Updated{filename: filename}) }
+
+		if err := client.remote.Sync(UploadingModificationsQueue{updated: updated}); err == nil {
+			for filename := range batch { synced[filename] = true }
+		} else {
+			client.logger.Error(err.Error())
+		}
+	}
+
+	for {
+		batch := make(map[Filename]bool)
+		var curBatchSize FileSize
+		errBatch := filepath.Walk( // MAYBE: optimize. Do not walk over `synced`
+			client.root,
+			func(path string, info fs.FileInfo, err error) error {
+				if err != nil {
+					client.logger.Error(err.Error())
+					return nil
+				}
+				if info.IsDir() { return nil }
+				filename := Filename(path)
+				if synced[filename] { return nil }
+				batch[filename] = true
+				curBatchSize = curBatchSize.Add(FileSize{bytes: uint64(info.Size())})
+				if curBatchSize.IsLess(batchSize) {
+					return nil
+				} else {
+					return io.EOF
+				}
+			},
+		)
+		switch errBatch {
+			case io.EOF:
+				upload(batch)
+			case nil:
+				upload(batch)
+				return nil
+			default:
+				return errBatch
+		}
+	}
+}
 func (client *SSHMirror) Run() {
 	queue := ModificationsQueue{}
 	var syncing sync.Mutex
@@ -442,23 +539,7 @@ func (client *SSHMirror) Run() {
 			return
 		}
 
-		var doSync2 func(UploadingModificationsQueue, error) // TODO: rename
-		doSync2 = func(prevUpload UploadingModificationsQueue, prevErr error) {
-			client.logger.Debug("doSync2.queue", &queue)
-			uploadingModificationsQueue, err := queue.Flush(client.root)
-			PanicIf(err) // MAYBE: fallback
-			if !uploadingModificationsQueue.Equals(prevUpload) {
-				client.logger.Debug("uploadingModificationsQueue", uploadingModificationsQueue)
-				if err2 := client.remote.Sync(uploadingModificationsQueue); err2 != nil {
-					doSync2(uploadingModificationsQueue, err2)
-				}
-			} else {
-				client.logger.Error(prevErr.Error())
-				client.logger.Error("Applying fallback algorithm")
-				client.remote.Fallback(uploadingModificationsQueue)
-			}
-		}
-		doSync2(UploadingModificationsQueue{}, nil)
+		client.sync(&queue)
 
 		if queue.IsEmpty() { client.onReady() }
 	}
@@ -488,6 +569,26 @@ func (client *SSHMirror) Run() {
 			case modification, ok := <-client.watcher.Modifications():
 				if !ok { return } // TODO: make sure previous (running) modifications are uploaded
 				modificationReceived(modification)
+		}
+	}
+}
+func (client *SSHMirror) sync(queue *ModificationsQueue) {
+	client.logger.Debug("sync.queue", queue)
+	queue.mutex.Lock()
+	originalQueue := queue.Copy()
+	uploadingModificationsQueue, errFlush := queue.Flush()
+	queue.mutex.Unlock()
+	PanicIf(errFlush) // THINK: fallback
+	client.logger.Debug("uploadingModificationsQueue", uploadingModificationsQueue)
+	if errSync := client.remote.Sync(uploadingModificationsQueue); errSync != nil {
+		if queue.IsEmpty() {
+			client.logger.Error(errSync.Error())
+			client.logger.Error("Applying fallback algorithm")
+			client.remote.Fallback(uploadingModificationsQueue)
+		} else {
+			Must(originalQueue.Merge(queue)) // THINK: fallback
+			queue = originalQueue
+			client.sync(queue) // THINK: limit of tries
 		}
 	}
 }

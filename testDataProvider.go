@@ -825,5 +825,33 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)), // group end
+		//(func(a, b Filename) TestModificationCase {
+		//	return TestModificationCase{
+		//		chain: TestModificationChain{
+		//			before: []Filename{a},
+		//			after: TestModificationsList{
+		//				TestSimpleModification{move(a, b)},
+		//				TestSimpleModification{write(a)},
+		//				TestSimpleModification{remove(a)},
+		//			},
+		//		},
+		//		expectedModifications: []Modification{
+		//			Moved{
+		//				from: a,
+		//				to:   b,
+		//			},
+		//			Updated{filename: a},
+		//			Deleted{filename: a},
+		//		},
+		//		expectedUploadingQueue: UploadingModificationsQueue{
+		//			moved: []Moved{
+		//				{
+		//					from: a,
+		//					to:   b,
+		//				},
+		//			},
+		//		},
+		//	}
+		//})(generateFilename(true), generateFilename(true)),
 	}
 }

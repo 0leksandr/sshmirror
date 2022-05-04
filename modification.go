@@ -168,25 +168,21 @@ func (queue *ModificationsQueue) IsEmpty() bool {
 		len(queue.deleted) == 0 &&
 		len(queue.moved) == 0
 }
-func (queue *ModificationsQueue) Flush(localDir string) (UploadingModificationsQueue, error) {
-	queue.mutex.Lock()
-	queueCopy := queue.copy()
+func (queue *ModificationsQueue) Flush() (UploadingModificationsQueue, error) {
+	if err := queue.optimize(); err != nil { return UploadingModificationsQueue{}, err }
+
+	uploadingModificationsQueue := UploadingModificationsQueue{
+		updated: queue.updated,
+		deleted: queue.deleted,
+		moved:   queue.moved,
+	}
 	queue.updated = []Updated{}
 	queue.deleted = []Deleted{}
 	queue.moved = []Moved{}
-	queue.mutex.Unlock()
 
-	if err := queueCopy.optimize(localDir); err == nil {
-		return UploadingModificationsQueue{
-			updated: queueCopy.updated,
-			deleted: queueCopy.deleted,
-			moved:   queueCopy.moved,
-		}, nil
-	} else {
-		return UploadingModificationsQueue{}, err
-	}
+	return uploadingModificationsQueue, nil
 }
-func (queue *ModificationsQueue) copy() ModificationsQueue {
+func (queue *ModificationsQueue) Copy() *ModificationsQueue {
 	updated := make([]Updated, len(queue.updated))
 	deleted := make([]Deleted, len(queue.deleted))
 	moved := make([]Moved, len(queue.moved))
@@ -194,13 +190,25 @@ func (queue *ModificationsQueue) copy() ModificationsQueue {
 	copy(deleted, queue.deleted)
 	copy(moved, queue.moved)
 
-	return ModificationsQueue{
+	return &ModificationsQueue{
 		updated: updated,
 		deleted: deleted,
 		moved:   moved,
 	}
 }
-func (queue *ModificationsQueue) optimize(localDir string) error {
+func (queue *ModificationsQueue) Merge(other *ModificationsQueue) error {
+	for _, moved := range other.moved {
+		if err := queue.Add(moved); err != nil { return err }
+	}
+	for _, deleted := range other.deleted {
+		if err := queue.Add(deleted); err != nil { return err }
+	}
+	for _, updated := range other.updated {
+		if err := queue.Add(updated); err != nil { return err }
+	}
+	return nil
+}
+func (queue *ModificationsQueue) optimize() error {
 	// check for circular move
 	removedCircular := true // TODO: remove after triangular move is uncommented
 	for removedCircular {
@@ -213,7 +221,7 @@ func (queue *ModificationsQueue) optimize(localDir string) error {
 					if movedI.from == movedJ.to && movedI.to == movedJ.from {
 						queue.removeMoved(j)
 						queue.removeMoved(i)
-						// MAYBE: something smarter
+						// THINK: something smarter
 						var err2 error
 						for _, filename := range [2]Filename{movedI.from , movedJ.from} {
 							if err3 := queue.Add(Updated{filename: filename}); err3 != nil { err2 = err3 }
