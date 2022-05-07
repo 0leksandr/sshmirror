@@ -49,7 +49,10 @@ func (sshClient) New(config Config) *sshClient {
 		sshCmd:      sshCmd,
 		controlPath: controlPath,
 		masterReady: &waitingMaster,
-		logger:      NullLogger{},
+		logger:      Logger{
+			debug: NullLogger{},
+			error: StdErrLogger{},
+		},
 	}
 
 	client.masterReady.Lock()

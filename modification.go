@@ -52,9 +52,6 @@ func (deleted Deleted) Join(queue *ModificationsQueue) error {
 		}
 	}
 	for i, moved := range queue.moved {
-		if moved.from == deleted.filename {
-			return errors.New("moved from, then deleted")
-		}
 		if moved.to == deleted.filename {
 			queue.removeMoved(i)
 			if !queue.HasModifications(moved.from) {
@@ -84,16 +81,16 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 		}
 	}
 
+	for i, updated := range queue.updated {
+		if updated.filename == moved.to {
+			queue.removeUpdated(i)
+		}
+	}
 	for _, updated := range queue.updated {
 		if updated.filename == moved.from {
 			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
 			if err := queue.Add(Updated{filename: moved.to}); err != nil { return err }
 			addToQueue = false
-		}
-	}
-	for i, updated := range queue.updated {
-		if updated.filename == moved.to {
-			queue.removeUpdated(i)
 		}
 	}
 
@@ -168,20 +165,6 @@ func (queue *ModificationsQueue) IsEmpty() bool {
 		len(queue.deleted) == 0 &&
 		len(queue.moved) == 0
 }
-func (queue *ModificationsQueue) Flush() (UploadingModificationsQueue, error) {
-	if err := queue.optimize(); err != nil { return UploadingModificationsQueue{}, err }
-
-	uploadingModificationsQueue := UploadingModificationsQueue{
-		updated: queue.updated,
-		deleted: queue.deleted,
-		moved:   queue.moved,
-	}
-	queue.updated = []Updated{}
-	queue.deleted = []Deleted{}
-	queue.moved = []Moved{}
-
-	return uploadingModificationsQueue, nil
-}
 func (queue *ModificationsQueue) Copy() *ModificationsQueue {
 	updated := make([]Updated, len(queue.updated))
 	deleted := make([]Deleted, len(queue.deleted))
@@ -196,19 +179,10 @@ func (queue *ModificationsQueue) Copy() *ModificationsQueue {
 		moved:   moved,
 	}
 }
-func (queue *ModificationsQueue) Merge(other *ModificationsQueue) error {
-	for _, moved := range other.moved {
-		if err := queue.Add(moved); err != nil { return err }
-	}
-	for _, deleted := range other.deleted {
-		if err := queue.Add(deleted); err != nil { return err }
-	}
-	for _, updated := range other.updated {
-		if err := queue.Add(updated); err != nil { return err }
-	}
-	return nil
-}
-func (queue *ModificationsQueue) optimize() error {
+func (queue *ModificationsQueue) Optimize() error {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+
 	// check for circular move
 	removedCircular := true // TODO: remove after triangular move is uncommented
 	for removedCircular {
@@ -261,30 +235,8 @@ func (queue *ModificationsQueue) optimize() error {
 
 	return nil
 }
-func (queue *ModificationsQueue) removeUpdated(i int) {
-	last := len(queue.updated) - 1
-	if i != last { queue.updated[i] = queue.updated[last] }
-	queue.updated = queue.updated[:last]
-}
-func (queue *ModificationsQueue) removeDeleted(i int) {
-	last := len(queue.deleted) - 1
-	if i != last { queue.deleted[i] = queue.deleted[last] }
-	queue.deleted = queue.deleted[:last]
-}
-func (queue *ModificationsQueue) removeMoved(i int) {
-	last := len(queue.moved) - 1
-	if i != last { queue.moved[i] = queue.moved[last] }
-	queue.moved = queue.moved[:last]
-}
-
-type UploadingModificationsQueue struct {
-	updated []Updated
-	deleted []Deleted
-	moved   []Moved
-}
-func (queue UploadingModificationsQueue) Equals(other UploadingModificationsQueue) bool {
-	if
-		len(queue.updated) != len(other.updated) ||
+func (queue *ModificationsQueue) Equals(other *ModificationsQueue) bool { // MAYBE: remove
+	if len(queue.updated) != len(other.updated) ||
 		len(queue.deleted) != len(other.deleted) ||
 		len(queue.moved) != len(other.moved,
 	) {
@@ -302,4 +254,69 @@ func (queue UploadingModificationsQueue) Equals(other UploadingModificationsQueu
 	}
 
 	return true
+}
+func (queue *ModificationsQueue) removeUpdated(i int) {
+	last := len(queue.updated) - 1
+	if i != last { queue.updated[i] = queue.updated[last] }
+	queue.updated = queue.updated[:last]
+}
+func (queue *ModificationsQueue) removeDeleted(i int) {
+	last := len(queue.deleted) - 1
+	if i != last { queue.deleted[i] = queue.deleted[last] }
+	queue.deleted = queue.deleted[:last]
+}
+func (queue *ModificationsQueue) removeMoved(i int) {
+	last := len(queue.moved) - 1
+	if i != last { queue.moved[i] = queue.moved[last] }
+	queue.moved = queue.moved[:last]
+}
+
+type TransactionalQueue struct { // TODO: rename
+	ModificationsQueue
+	backup *ModificationsQueue
+	mutex  sync.Mutex
+}
+func (queue *TransactionalQueue) Begin() {
+	queue.mutex.Lock()
+	queue.mustNotHaveStarted()
+	queue.backup = queue.ModificationsQueue.Copy()
+	queue.mutex.Unlock()
+}
+func (queue *TransactionalQueue) Commit() {
+	queue.mutex.Lock()
+	queue.backup = nil
+	queue.mutex.Unlock()
+}
+func (queue *TransactionalQueue) Rollback() {
+	queue.mutex.Lock()
+	queue.ModificationsQueue = *queue.backup.Copy() // THINK: is `Copy` necessary?
+	queue.backup = nil
+	queue.mutex.Unlock()
+}
+func (queue *TransactionalQueue) IsEmpty() bool {
+	queue.mustNotHaveStarted()
+	return queue.ModificationsQueue.IsEmpty()
+}
+func (queue *TransactionalQueue) AtomicAdd(modification Modification) error {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+
+	for _, _queue := range queue.queues() {
+		if err := _queue.AtomicAdd(modification); err != nil { return err }
+	}
+	return nil
+}
+func (queue *TransactionalQueue) mustNotHaveStarted() {
+	if queue.backup != nil { panic("transaction is active") }
+}
+func (queue *TransactionalQueue) queues() []*ModificationsQueue {
+	queues := []*ModificationsQueue{&queue.ModificationsQueue}
+	if queue.backup != nil { queues = append(queues, queue.backup) }
+	return queues
+}
+
+type UploadingModificationsQueue struct { // TODO: remove
+	updated []Updated
+	deleted []Deleted
+	moved   []Moved
 }

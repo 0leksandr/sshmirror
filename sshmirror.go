@@ -24,6 +24,7 @@ import (
 // TODO: ignore special types of files (pipes, block devices etc.)
 // TODO: support directories
 // TODO: support scp without rsync
+// MAYBE: move+remove with one operation
 // MAYBE: support symlinks
 // MAYBE: automatically adjust timeout based on server response rate
 // MAYBE: copy permissions
@@ -156,65 +157,55 @@ func (Config) ParseArguments() Config {
 }
 
 type RemoteManager struct {
-	io.Closer
-	LoggerAware
-	client    RemoteClient
+	RemoteClient
 	verbosity int // MAYBE: enum
 	localDir  string
 }
 func (RemoteManager) New(config Config) RemoteManager {
 	return RemoteManager{
-		client:    sshClient{}.New(config),
-		verbosity: config.verbosity,
-		localDir:  config.localDir,
+		RemoteClient: sshClient{}.New(config),
+		verbosity:    config.verbosity,
+		localDir:     config.localDir,
 	}
 }
-func (manager RemoteManager) Close() error {
-	return manager.client.Close()
+func (manager RemoteManager) Update(updated []Updated) error {
+	if len(updated) > 0 {
+		updatedFilenames := make([]Filename, 0, len(updated))
+		for _, _updated := range updated { updatedFilenames = append(updatedFilenames, _updated.filename) }
+		return manager.sync(
+			manager.message(updatedFilenames, "+", "uploading"),
+			func() error { return manager.RemoteClient.Update(updated) },
+		)
+	}
+	return nil
+}
+func (manager RemoteManager) Delete(deleted []Deleted) error {
+	if len(deleted) > 0 {
+		deletedFilenames := make([]Filename, 0, len(deleted))
+		for _, _deleted := range deleted { deletedFilenames = append(deletedFilenames, _deleted.filename) }
+		return manager.sync(
+			manager.message(deletedFilenames, "-", "deleting"),
+			func() error { return manager.RemoteClient.Delete(deleted) },
+		)
+	}
+	return nil
+}
+func (manager RemoteManager) Move(moved []Moved) error {
+	if len(moved) > 0 {
+		movedFilenames := make([]Filename, 0, len(moved))
+		for _, _moved := range moved { movedFilenames = append(movedFilenames, _moved.from) }
+		return manager.sync(
+			manager.message(movedFilenames, "^", "moving"),
+			func() error { return manager.RemoteClient.Move(moved) },
+		)
+	}
+	return nil
+}
+func (manager RemoteManager) Ready() *Locker { // MAYBE: remove
+	return manager.RemoteClient.Ready()
 }
 func (manager RemoteManager) SetLogger(logger Logger) {
-	manager.client.SetLogger(logger)
-}
-func (manager RemoteManager) Ready() *Locker {
-	return manager.client.Ready()
-}
-func (manager RemoteManager) Sync(queue UploadingModificationsQueue) error {
-	doSync := func(message string, operation func() error) error {
-		if message == "" {
-			return operation()
-		} else {
-			return stopwatch(message, operation)
-		}
-	}
-
-	if len(queue.deleted) > 0 {
-		deletedFilenames := make([]Filename, 0, len(queue.deleted))
-		for _, deleted := range queue.deleted { deletedFilenames = append(deletedFilenames, deleted.filename) }
-		if err := doSync(
-			manager.message(deletedFilenames, "-", "deleting"),
-			func() error { return manager.client.Delete(queue.deleted) },
-		); err != nil { return err }
-	}
-
-	if len(queue.moved) > 0 {
-		movedFilenames := make([]Filename, 0, len(queue.moved))
-		for _, moved := range queue.moved { movedFilenames = append(movedFilenames, moved.from) }
-		if err := doSync(
-			manager.message(movedFilenames, "^", "moving"),
-			func() error { return manager.client.Move(queue.moved) },
-		); err != nil { return err }
-	}
-
-	if len(queue.updated) > 0 {
-		updatedFilenames := make([]Filename, 0, len(queue.updated))
-		for _, updated := range queue.updated { updatedFilenames = append(updatedFilenames, updated.filename) }
-		if err := doSync(
-			manager.message(updatedFilenames, "+", "uploading"),
-			func() error { return manager.client.Update(queue.updated) },
-		); err != nil { return err }
-	}
-
-	return nil
+	manager.RemoteClient.SetLogger(logger)
 }
 func (manager RemoteManager) Fallback(queue UploadingModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
@@ -227,8 +218,14 @@ func (manager RemoteManager) Fallback(queue UploadingModificationsQueue) { // MA
 
 	manager.fallbackFiles(files)
 }
+func (manager RemoteManager) sync(message string, operation func() error) error {
+	if message == "" {
+		return operation()
+	} else {
+		return stopwatch(message, operation)
+	}
+}
 func (manager RemoteManager) fallbackFiles(files []Filename) {
-	client := manager.client
 	verbosity := manager.verbosity
 	filesUnique := make(map[Filename]interface{})
 	for _, file := range files { filesUnique[file] = nil }
@@ -249,8 +246,8 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 
 	result := true
 	if verbosity == 0 {
-		if len(updated) > 0 { result = result && (client.Update(updated) == nil) }
-		if len(deleted) > 0 { result = result && (client.Delete(deleted) == nil) }
+		if len(updated) > 0 { result = result && (manager.RemoteClient.Update(updated) == nil) }
+		if len(deleted) > 0 { result = result && (manager.RemoteClient.Delete(deleted) == nil) }
 	} else {
 		if len(updated) > 0 {
 			var uploadMessage string
@@ -266,7 +263,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 			}
 			result = stopwatch(
 				uploadMessage,
-				func() error { return client.Update(updated) },
+				func() error { return manager.RemoteClient.Update(updated) },
 			) == nil
 		}
 
@@ -284,7 +281,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 			}
 			result = stopwatch(
 				uploadMessage,
-				func() error { return client.Delete(deleted) },
+				func() error { return manager.RemoteClient.Delete(deleted) },
 			) == nil
 		}
 	}
@@ -366,14 +363,16 @@ type SSHMirror struct {
 	onReady func() // only for test
 }
 func (SSHMirror) New(config Config) *SSHMirror {
-	errorLogger := func() ErrorLogger {
-		if config.errorCmd != "" {
-			return ErrorCmdLogger{errorCmd: config.errorCmd}
-		} else {
-			return StdErrLogger{}
-		}
-	}()
-	logger := NullLogger{errorLogger: errorLogger}
+	logger := Logger{
+		debug: NullLogger{},
+		error: func() ErrorLogger {
+			if config.errorCmd != "" {
+				return ErrorCmdLogger{errorCmd: config.errorCmd}
+			} else {
+				return StdErrLogger{}
+			}
+		}(),
+	}
 
 	watcher := (func() Watcher {
 		switch config.watcher {
@@ -460,7 +459,7 @@ func (client *SSHMirror) Init(batchSize FileSize) error {
 		updated := make([]Updated, 0, len(batch))
 		for filename := range batch { updated = append(updated, Updated{filename: filename}) }
 
-		if err := client.remote.Sync(UploadingModificationsQueue{updated: updated}); err == nil {
+		if err := client.remote.Update(updated); err == nil {
 			for filename := range batch { synced[filename] = true }
 		} else {
 			client.logger.Error(err.Error())
@@ -501,7 +500,7 @@ func (client *SSHMirror) Init(batchSize FileSize) error {
 	}
 }
 func (client *SSHMirror) Run() {
-	queue := ModificationsQueue{}
+	queue := TransactionalQueue{}
 	var syncing sync.Mutex
 	var cancelFirst *context.CancelFunc
 	var cancelLast *context.CancelFunc
@@ -572,24 +571,56 @@ func (client *SSHMirror) Run() {
 		}
 	}
 }
-func (client *SSHMirror) sync(queue *ModificationsQueue) {
+func (client *SSHMirror) sync(queue *TransactionalQueue) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
-	queue.mutex.Lock()
-	originalQueue := queue.Copy()
-	uploadingModificationsQueue, errFlush := queue.Flush()
-	queue.mutex.Unlock()
-	PanicIf(errFlush) // THINK: fallback
-	client.logger.Debug("uploadingModificationsQueue", uploadingModificationsQueue)
-	if errSync := client.remote.Sync(uploadingModificationsQueue); errSync != nil {
-		if queue.IsEmpty() {
-			client.logger.Error(errSync.Error())
-			client.logger.Error("Applying fallback algorithm")
-			client.remote.Fallback(uploadingModificationsQueue)
-		} else {
-			Must(originalQueue.Merge(queue)) // THINK: fallback
-			queue = originalQueue
-			client.sync(queue) // THINK: limit of tries
+	Must(queue.Optimize()) // THINK: fallback
+
+	syncMoved := func() {
+		for len(queue.moved) > 0 {
+			queue.Begin()
+			moved := queue.moved
+			queue.moved = []Moved{}
+			if err := client.remote.Move(moved); err == nil {
+				queue.Commit()
+			} else {
+				client.logger.Error(err.Error())
+				queue.Rollback()
+			}
 		}
+	}
+	syncDeleted := func() {
+		for len(queue.deleted) > 0 {
+			queue.Begin()
+			deleted := queue.deleted
+			queue.deleted = []Deleted{}
+			if err := client.remote.Delete(deleted); err == nil {
+				queue.Commit()
+			} else {
+				client.logger.Error(err.Error())
+				queue.Rollback()
+			}
+			syncMoved()
+		}
+	}
+	syncUpdated := func() {
+		for len(queue.updated) > 0 {
+			queue.Begin()
+			updated := queue.updated
+			queue.updated = []Updated{}
+			if err := client.remote.Update(updated); err == nil {
+				queue.Commit()
+			} else {
+				client.logger.Error(err.Error())
+				queue.Rollback()
+			}
+			syncMoved()
+			syncDeleted()
+		}
+	}
+	for !queue.IsEmpty() {
+		syncMoved()
+		syncDeleted()
+		syncUpdated()
 	}
 }
 

@@ -3,81 +3,116 @@ package main
 import (
 	"fmt"
 	"github.com/0leksandr/my.go"
+	"regexp"
 	"sync"
 	"time"
 )
+
+type Logger struct {
+	debug DebugLogger
+	error ErrorLogger
+}
+func (logger Logger) Debug(message string, values ...interface{}) {
+	logger.debug.Debug(message, values...)
+}
+func (logger Logger) Error(err string) {
+	logger.error.Error(err)
+}
 
 type ErrorLogger interface {
 	Error(string)
 }
 
-type StdErrLogger struct {
-	ErrorLogger
-}
+type StdErrLogger struct {}
 func (logger StdErrLogger) Error(err string) {
 	my.WriteToStderr(err)
 }
 
 type ErrorCmdLogger struct {
-	ErrorLogger
 	errorCmd string
 }
 func (logger ErrorCmdLogger) Error(err string) {
 	my.RunCommand("", logger.errorCmd + " " + err, nil, nil)
 }
 
-type Logger interface {
-	ErrorLogger
+type InMemoryErrorLogger struct {
+	collector InMemoryLogCollector
+}
+func (logger *InMemoryErrorLogger) Error(err string) {
+	logger.collector.Add("Error: " + err)
+}
+
+type DebugLogger interface {
 	Debug(string, ...interface{})
 }
 
-type InMemoryLogger struct {
-	Logger
-	logs        []string
-	timestamps  bool
-	mutex       sync.Mutex
-	errorLogger ErrorLogger
+type InMemoryDebugLogger struct {
+	formatter LogFormatter
+	collector InMemoryLogCollector
 }
-func (logger *InMemoryLogger) Debug(message string, values ...interface{}) {
-	switch len(values) {
-		case 0:
-			logger.log(message)
-		case 1:
-			logger.log(message + ": " + my.Sdump2(values[0]))
-		default:
-			logger.mutex.Lock()
-			logger.log(message)
-			for _, value := range values {
-				logger.log(my.Sdump2(value))
-			}
-			logger.mutex.Unlock()
+func (logger *InMemoryDebugLogger) Debug(message string, values ...interface{}) {
+	for _, log := range logger.formatter.Format(message, values...) {
+		logger.collector.Add(log)
 	}
 }
-func (logger *InMemoryLogger) Error(err string) {
-	logger.log("Error: " + err)
-	logger.errorLogger.Error(err)
+
+type StdOutLogger struct {
+	formatter LogFormatter
 }
-func (logger *InMemoryLogger) Print() {
+func (logger StdOutLogger) Debug(message string, values ...interface{}) {
+	for _, log := range logger.formatter.Format(message, values...) {
+		fmt.Println(log)
+	}
+}
+
+type NullLogger struct {}
+func (logger NullLogger) Debug(string, ...interface{}) {}
+
+type InMemoryLogCollector struct {
+	logs      []string
+	mutex     sync.Mutex
+	formatter LogFormatter
+}
+func (logger *InMemoryLogCollector) Add(text string) {
+	logger.logs = append(logger.logs, text)
+}
+func (logger *InMemoryLogCollector) Print() {
 	logger.mutex.Lock()
 	for _, log := range logger.logs {
 		fmt.Println(log)
 	}
 	logger.mutex.Unlock()
 }
-func (logger *InMemoryLogger) log(text string) {
-	log := my.Trace(false)[2].String()
-	if logger.timestamps { log += ": " + time.Now().String() }
-	log += "\n" + text
-	logger.logs = append(logger.logs, log)
+func (logger *InMemoryLogCollector) Clear() {
+	logger.logs = []string{}
 }
 
-type NullLogger struct {
-	Logger
-	errorLogger ErrorLogger
+type LogFormatter struct {
+	timestamps bool
 }
-func (logger NullLogger) Debug(string, ...interface{}) {}
-func (logger NullLogger) Error(err string) {
-	logger.errorLogger.Error(err)
+func (formatter LogFormatter) Format(message string, values ...interface{}) []string {
+	switch len(values) {
+		case 0:
+			return []string{formatter.addTrace(message)}
+		case 1:
+			return []string{formatter.addTrace(message + ": " + my.Sdump2(values[0]))}
+		default:
+			formatted := make([]string, 0, 1 + len(values))
+			formatted = append(formatted, formatter.addTrace(message))
+			for _, value := range values {
+				formatted = append(formatted, formatter.addTrace(my.Sdump2(value)))
+			}
+			return formatted
+	}
+}
+func (formatter LogFormatter) addTrace(text string) string {
+	trace := my.Trace(false).SkipFile(1).String()
+	if formatter.timestamps {
+		t := time.Now().String()
+		t = regexp.MustCompile(" m=\\+([^ ]+)$").FindStringSubmatch(t)[1]
+		trace += ": " + t
+	}
+	return trace + "\n" + text
 }
 
 type LoggerAware interface {

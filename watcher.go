@@ -153,9 +153,9 @@ func (watcher *FsnotifyWatcher) put(modification Modification) { // MAYBE: remov
 type InotifyWatcher struct {
 	Watcher
 	io.Closer
-	modifications  chan Modification
-	logger         Logger
-	onClose        func() error
+	modifications chan Modification
+	logger        Logger
+	onClose       func() error
 }
 func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, error) {
 	modifications := make(chan Modification) // MAYBE: reserve size
