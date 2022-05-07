@@ -207,7 +207,7 @@ func (manager RemoteManager) Ready() *Locker { // MAYBE: remove
 func (manager RemoteManager) SetLogger(logger Logger) {
 	manager.RemoteClient.SetLogger(logger)
 }
-func (manager RemoteManager) Fallback(queue UploadingModificationsQueue) { // MAYBE: legacy, remove
+func (manager RemoteManager) Fallback(queue *ModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
 	for _, updated := range queue.updated { files = append(files, updated.filename) }
 	for _, deleted := range queue.deleted { files = append(files, deleted.filename) }

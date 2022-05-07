@@ -398,9 +398,9 @@ func TestIntegration(t *testing.T) {
 						logger.Debug("processId", processId)
 						for _, cmd := range []string{
 							"find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha1sum",
-							"find . \\( -type f -o -type d \\) -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a'",
-							hashCmd,
-							"tree ../..",
+							//"find . \\( -type f -o -type d \\) -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a'",
+							//hashCmd,
+							//"tree ../..",
 							"find . -type f -printf \"%p:\" -exec cat {} \\; | LC_ALL=C sort", // MAYBE: fix `cat`'ing empty files
 						} {
 							local := make([]string, 0)

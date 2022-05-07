@@ -314,9 +314,3 @@ func (queue *TransactionalQueue) queues() []*ModificationsQueue {
 	if queue.backup != nil { queues = append(queues, queue.backup) }
 	return queues
 }
-
-type UploadingModificationsQueue struct { // TODO: remove
-	updated []Updated
-	deleted []Deleted
-	moved   []Moved
-}
