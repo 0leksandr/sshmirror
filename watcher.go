@@ -27,7 +27,6 @@ type Watcher interface {
 
 type FsnotifyWatcher struct { // PRIORITY: watch new subdirectories
 	Watcher
-	io.Closer
 	modifications chan Modification
 	stopWatching  func()
 }
@@ -144,7 +143,6 @@ func (watcher *FsnotifyWatcher) put(modification Modification) { // MAYBE: remov
 
 type InotifyWatcher struct {
 	Watcher
-	io.Closer
 	modifications chan Modification
 	logger        Logger
 	onClose       func() error
@@ -220,7 +218,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	PanicIf(err1)
 	stdoutScanner := bufio.NewScanner(stdout)
 	reg := regexp.MustCompile(fmt.Sprintf(
-		"(?s)^%s(.+)%s(.+)$",
+		"(?s)^%s(.+)%s([A-Z_,]+)$",
 		stripTrailSlash(root) + string(os.PathSeparator),
 		Delimiter,
 	))
