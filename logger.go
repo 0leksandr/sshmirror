@@ -42,6 +42,15 @@ func (logger *InMemoryErrorLogger) Error(err string) {
 	logger.collector.Add("Error: " + err)
 }
 
+type ComboErrorLogger struct {
+	loggers []ErrorLogger
+}
+func (logger ComboErrorLogger) Error(err string) {
+	for _, _logger := range logger.loggers {
+		_logger.Error(err)
+	}
+}
+
 type DebugLogger interface {
 	Debug(string, ...interface{})
 }
@@ -67,6 +76,15 @@ func (logger StdOutLogger) Debug(message string, values ...interface{}) {
 
 type NullLogger struct {}
 func (logger NullLogger) Debug(string, ...interface{}) {}
+
+type ComboDebugLogger struct {
+	loggers []DebugLogger
+}
+func (logger ComboDebugLogger) Debug(message string, values ...interface{}) {
+	for _, _logger := range logger.loggers {
+		_logger.Debug(message, values...)
+	}
+}
 
 type InMemoryLogCollector struct {
 	logs      []string

@@ -448,6 +448,7 @@ func (client *SSHMirror) Close() error {
 }
 func (client *SSHMirror) SetLogger(logger Logger) {
 	client.logger = logger
+	client.watcher.SetLogger(logger)
 	client.remote.SetLogger(logger)
 }
 func (client *SSHMirror) Init(batchSize FileSize) error {

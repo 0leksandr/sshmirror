@@ -20,6 +20,7 @@ import (
 
 type Watcher interface {
 	io.Closer
+	LoggerAware
 	Modifications() <-chan Modification
 	Name() string
 }
@@ -96,6 +97,9 @@ func (watcher *FsnotifyWatcher) Close() error {
 }
 func (watcher *FsnotifyWatcher) Modifications() <-chan Modification {
 	return watcher.modifications
+}
+func (watcher *FsnotifyWatcher) SetLogger(Logger) {
+	// MAYBE: implement
 }
 func (FsnotifyWatcher) watchDirRecursive(
 	path string,
@@ -178,10 +182,19 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		MovedToCode
 	)
 
+	// something that never can be a part of a path/filename
+	// MAYBE: something else for exotic filesystems.
+	//        See https://en.wikipedia.org/wiki/Filename#Comparison_of_filename_limitations
+	const Delimiter = "///"
+
 	args := []string{
 		"--monitor",
 		"--recursive",
-		"--format", "%w%f\t%e",
+		"--format", strings.Join([]string{
+			"%w%f",
+			Delimiter,
+			"%e",
+		}, ""),
 		"--event", CloseWriteStr,
 		"--event", DeleteStr,
 		"--event", MovedFromStr,
@@ -206,7 +219,11 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	stdout, err1 := command.StdoutPipe()
 	PanicIf(err1)
 	stdoutScanner := bufio.NewScanner(stdout)
-	reg := regexp.MustCompile(fmt.Sprintf("^%s(.+)\t([^\t]+)$", stripTrailSlash(root) + string(os.PathSeparator)))
+	reg := regexp.MustCompile(fmt.Sprintf(
+		"(?s)^%s(.+)%s(.+)$",
+		stripTrailSlash(root) + string(os.PathSeparator),
+		Delimiter,
+	))
 	knownTypes := []struct {
 		str  string
 		code EventType
@@ -217,8 +234,18 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		{MovedToStr,    MovedToCode   },
 	}
 	go func() { // stdout to events
-		for stdoutScanner.Scan() {
-			line := stdoutScanner.Text()
+		for {
+			line := func() string {
+				var lines []string
+				for stdoutScanner.Scan() {
+					lines = append(lines, stdoutScanner.Text())
+					line := lines[0]
+					if len(lines) > 1 { line = strings.Join(lines, "\n") }
+					if reg.MatchString(line) { return line }
+				}
+				return ""
+			}()
+			if line == "" { break }
 			watcher.logger.Debug("inotify.line", line)
 			parts := reg.FindStringSubmatch(line)
 			filename := parts[1]
@@ -298,6 +325,9 @@ func (watcher *InotifyWatcher) Close() error {
 }
 func (watcher *InotifyWatcher) Modifications() <-chan Modification {
 	return watcher.modifications
+}
+func (watcher *InotifyWatcher) SetLogger(logger Logger) {
+	watcher.logger = logger
 }
 func (watcher *InotifyWatcher) getNrFiles(root string) (uint64, error) {
 	var nrFiles uint64
