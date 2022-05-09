@@ -79,12 +79,8 @@ func (FsnotifyWatcher) New(root string, exclude string) Watcher {
 	}
 
 	go func() {
-		for {
-			select {
-				case event, ok := <-events:
-					if !ok { return }
-					processEvent(event)
-			}
+		for event := range events {
+			processEvent(event)
 		}
 	}()
 
@@ -133,18 +129,10 @@ func (FsnotifyWatcher) watchDirRecursive(
 	))
 
 	go func() {
-		for {
-			select {
-				case err2, open := <-watcher.Errors:
-					if !open { return }
-					PanicIf(err2) // MAYBE: return errors channel
-			}
-		}
+		PanicIf(<-watcher.Errors) // MAYBE: return errors channel
 	}()
 
-	return watcher.Events, func() {
-		Must(watcher.Close())
-	}
+	return watcher.Events, func() { Must(watcher.Close()) }
 }
 func (watcher *FsnotifyWatcher) put(modification Modification) { // MAYBE: remove
 	watcher.modifications <- modification
@@ -177,19 +165,27 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return &watcher, err }
 	}
 
-	const CloseWrite = "CLOSE_WRITE"
-	const Delete = "DELETE"
-	const MovedFrom = "MOVED_FROM"
-	const MovedTo = "MOVED_TO"
+	const CloseWriteStr = "CLOSE_WRITE"
+	const DeleteStr     = "DELETE"
+	const MovedFromStr  = "MOVED_FROM"
+	const MovedToStr    = "MOVED_TO"
+
+	type EventType uint8
+	const (
+		CloseWriteCode EventType = 1 << iota
+		DeleteCode
+		MovedFromCode
+		MovedToCode
+	)
 
 	args := []string{
 		"--monitor",
 		"--recursive",
 		"--format", "%w%f\t%e",
-		"--event", CloseWrite,
-		"--event", Delete,
-		"--event", MovedFrom,
-		"--event", MovedTo,
+		"--event", CloseWriteStr,
+		"--event", DeleteStr,
+		"--event", MovedFromStr,
+		"--event", MovedToStr,
 	}
 	if exclude != "" {
 		args = append(args, "--exclude", exclude) // TODO: test
@@ -197,7 +193,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	command := exec.Command("inotifywait", append(args, "--", root)...)
 
 	type Event struct {
-		eventType string // MAYBE: tinyint
+		eventType EventType
 		filename  string
 	}
 	events := make(chan Event) // MAYBE: reserve size
@@ -211,6 +207,15 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	PanicIf(err1)
 	stdoutScanner := bufio.NewScanner(stdout)
 	reg := regexp.MustCompile(fmt.Sprintf("^%s(.+)\t([^\t]+)$", stripTrailSlash(root) + string(os.PathSeparator)))
+	knownTypes := []struct {
+		str  string
+		code EventType
+	}{
+		{CloseWriteStr, CloseWriteCode},
+		{DeleteStr,     DeleteCode    },
+		{MovedFromStr,  MovedFromCode },
+		{MovedToStr,    MovedToCode   },
+	}
 	go func() { // stdout to events
 		for stdoutScanner.Scan() {
 			line := stdoutScanner.Text()
@@ -218,18 +223,13 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 			parts := reg.FindStringSubmatch(line)
 			filename := parts[1]
 			eventsStr := parts[2]
-			eventType, errReadEvent := func() (string, error) {
+			eventType, errReadEvent := func() (EventType, error) {
 				for _, eventType := range strings.Split(eventsStr, ",") {
-					for _, knownType := range []string{
-						CloseWrite,
-						Delete,
-						MovedFrom,
-						MovedTo,
-					}{
-						if eventType == knownType { return eventType, nil }
+					for _, knownType := range knownTypes {
+						if eventType == knownType.str { return knownType.code, nil }
 					}
 				}
-				return "", errors.New("unknown event: " + eventsStr)
+				return 0, errors.New("unknown event: " + eventsStr)
 			}()
 			if errReadEvent == nil {
 				events <- Event{
@@ -250,14 +250,14 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		watcher.logger.Debug("event", event)
 		filename := Filename(event.filename)
 		switch event.eventType {
-			case CloseWrite: put(Updated{filename})
-			case Delete: put(Deleted{filename})
-			case MovedFrom:
+			case CloseWriteCode: put(Updated{filename})
+			case DeleteCode: put(Deleted{filename})
+			case MovedFromCode:
 				putDefault := func() { put(Deleted{filename}) }
 				select {
 					case nextEvent, ok := <- events:
 						if ok {
-							if nextEvent.eventType == MovedTo {
+							if nextEvent.eventType == MovedToCode {
 								put(Moved{
 									from: filename,
 									to:   Filename(nextEvent.filename),
@@ -273,21 +273,13 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 						putDefault()
 					// MAYBE: listen for exit
 				}
-			case MovedTo: put(Updated{filename})
+			case MovedToCode: put(Updated{filename})
 		}
 	}
 	go func() { // events to modifications
-		for {
-			select {
-				case event, ok := <-events:
-					if ok {
-						processEvent(event)
-					} else {
-						close(watcher.modifications)
-						return
-					}
-			}
-		}
+		for event := range events { processEvent(event) }
+		close(watcher.modifications)
+		return
 	}()
 
 	errCommandStart := command.Start()
@@ -309,7 +301,7 @@ func (watcher *InotifyWatcher) Modifications() <-chan Modification {
 }
 func (watcher *InotifyWatcher) getNrFiles(root string) (uint64, error) {
 	var nrFiles uint64
-	done := make(chan bool, 1)
+	done := make(chan struct{}, 1)
 	var errStopwatch error
 	doNotWrite := cancellableTimer(
 		1 * time.Second,
@@ -334,7 +326,7 @@ func (watcher *InotifyWatcher) getNrFiles(root string) (uint64, error) {
 	if err != nil { return 0, err }
 	for buffer.Scan() { nrFiles++ }
 	(*doNotWrite)()
-	done <- true
+	done <- struct{}{}
 	if errStopwatch != nil { return 0, errStopwatch }
 	return nrFiles, nil
 }

@@ -7,6 +7,7 @@ import (
 
 type Modification interface {
 	Join(queue *ModificationsQueue) error
+	AffectedFiles() []Filename
 }
 // problem with created+updated: impossible to determine which one of the two is a moved file. I.e. a file was moved
 // to a new location. Is it created or updated?
@@ -127,6 +128,15 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 	}
 	if addToQueue { queue.moved = append(queue.moved, moved) }
 	return nil
+}
+func (updated Updated) AffectedFiles() []Filename {
+	return []Filename{updated.filename}
+}
+func (deleted Deleted) AffectedFiles() []Filename {
+	return []Filename{deleted.filename}
+}
+func (moved Moved) AffectedFiles() []Filename {
+	return []Filename{moved.from, moved.to}
 }
 
 type ModificationsQueue struct {

@@ -34,7 +34,7 @@ import (
 
 var Must = my.Must
 var PanicIf = my.PanicIf
-var RunCommand = my.RunCommand
+var StartCommand = my.StartCommand
 var WriteToStderr = my.WriteToStderr
 
 type Locker struct {
@@ -85,6 +85,35 @@ func (fileSize FileSize) Add(other FileSize) FileSize {
 }
 func (fileSize FileSize) IsLess(other FileSize) bool {
 	return fileSize.Bytes() < other.Bytes()
+}
+
+type CancellableContext struct { // MAYBE: rename
+	Result func() error
+	Cancel func()
+}
+
+type SwitchChannelFilenames struct {
+	on bool
+	ch chan Filename
+}
+func (SwitchChannelFilenames) New() SwitchChannelFilenames {
+	return SwitchChannelFilenames{
+		on: false,
+		ch: make(chan Filename), // MAYBE: buffer
+	}
+}
+func (c SwitchChannelFilenames) On() {
+	c.on = true
+}
+func (c SwitchChannelFilenames) Off() {
+	c.on = false
+	for len(c.ch) > 0 { <-c.ch }
+}
+func (c SwitchChannelFilenames) Put(filename Filename) {
+	if c.on { c.ch <- filename }
+}
+func (c SwitchChannelFilenames) Get() <-chan Filename {
+	return c.ch
 }
 
 type Config struct {
@@ -168,38 +197,38 @@ func (RemoteManager) New(config Config) RemoteManager {
 		localDir:     config.localDir,
 	}
 }
-func (manager RemoteManager) Update(updated []Updated) error {
-	if len(updated) > 0 {
-		updatedFilenames := make([]Filename, 0, len(updated))
-		for _, _updated := range updated { updatedFilenames = append(updatedFilenames, _updated.filename) }
-		return manager.sync(
+func (manager RemoteManager) Update(updated []Updated) CancellableContext {
+	updatedFilenames := make([]Filename, 0, len(updated))
+	for _, _updated := range updated { updatedFilenames = append(updatedFilenames, _updated.filename) }
+	cmdContext := manager.RemoteClient.Update(updated)
+	cmdResult := make(chan error, 1)
+	go func() {
+		cmdResult <- manager.sync(
 			manager.message(updatedFilenames, "+", "uploading"),
-			func() error { return manager.RemoteClient.Update(updated) },
+			cmdContext.Result,
 		)
+		close(cmdResult) // TODO: check if it's closed on cancel
+	}()
+	return CancellableContext{
+		Result: func() error { return <-cmdResult },
+		Cancel: cmdContext.Cancel,
 	}
-	return nil
 }
 func (manager RemoteManager) Delete(deleted []Deleted) error {
-	if len(deleted) > 0 {
-		deletedFilenames := make([]Filename, 0, len(deleted))
-		for _, _deleted := range deleted { deletedFilenames = append(deletedFilenames, _deleted.filename) }
-		return manager.sync(
-			manager.message(deletedFilenames, "-", "deleting"),
-			func() error { return manager.RemoteClient.Delete(deleted) },
-		)
-	}
-	return nil
+	deletedFilenames := make([]Filename, 0, len(deleted))
+	for _, _deleted := range deleted { deletedFilenames = append(deletedFilenames, _deleted.filename) }
+	return manager.sync(
+		manager.message(deletedFilenames, "-", "deleting"),
+		func() error { return manager.RemoteClient.Delete(deleted) },
+	)
 }
 func (manager RemoteManager) Move(moved []Moved) error {
-	if len(moved) > 0 {
-		movedFilenames := make([]Filename, 0, len(moved))
-		for _, _moved := range moved { movedFilenames = append(movedFilenames, _moved.from) }
-		return manager.sync(
-			manager.message(movedFilenames, "^", "moving"),
-			func() error { return manager.RemoteClient.Move(moved) },
-		)
-	}
-	return nil
+	movedFilenames := make([]Filename, 0, len(moved))
+	for _, _moved := range moved { movedFilenames = append(movedFilenames, _moved.from) }
+	return manager.sync(
+		manager.message(movedFilenames, "^", "moving"),
+		func() error { return manager.RemoteClient.Move(moved) },
+	)
 }
 func (manager RemoteManager) Ready() *Locker { // MAYBE: remove
 	return manager.RemoteClient.Ready()
@@ -246,7 +275,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 
 	result := true
 	if verbosity == 0 {
-		if len(updated) > 0 { result = result && (manager.RemoteClient.Update(updated) == nil) }
+		if len(updated) > 0 { result = result && (manager.RemoteClient.Update(updated).Result() == nil) }
 		if len(deleted) > 0 { result = result && (manager.RemoteClient.Delete(deleted) == nil) }
 	} else {
 		if len(updated) > 0 {
@@ -263,7 +292,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 			}
 			result = stopwatch(
 				uploadMessage,
-				func() error { return manager.RemoteClient.Update(updated) },
+				func() error { return manager.RemoteClient.Update(updated).Result() },
 			) == nil
 		}
 
@@ -426,30 +455,18 @@ func (client *SSHMirror) Init(batchSize FileSize) error {
 
 	synced := make(map[Filename]bool)
 
-	modified := func(Filename) {}
-	notSynced := func(filename Filename) {
-		modified(filename)
-		delete(synced, filename)
-	}
+	modified := func(Filename) {} // MAYBE: use `SwitchChannelFilenames`
 
 	go func() {
-		for {
-			select {
-				case modification, ok := <-client.watcher.Modifications():
-					if !ok { panic("modifications channel closed") }
-					switch modification.(type) { // TODO: something smarter
-						case Updated:
-							notSynced(modification.(Updated).filename)
-						case Deleted: // PRIORITY: handle directories
-							notSynced(modification.(Deleted).filename)
-						case Moved: // PRIORITY: handle directories
-							notSynced(modification.(Moved).from)
-							notSynced(modification.(Moved).to)
-						default:
-							panic("unknown modification type")
-					}
+		for modification := range client.watcher.Modifications() {
+			// PRIORITY: handle directories
+			// MAYBE: something smarter
+			for _, filename := range modification.AffectedFiles() {
+				modified(filename)
+				delete(synced, filename)
 			}
 		}
+		panic("modifications channel closed") // THINK: some exit point
 	}()
 
 	upload := func(batch map[Filename]bool) {
@@ -459,7 +476,7 @@ func (client *SSHMirror) Init(batchSize FileSize) error {
 		updated := make([]Updated, 0, len(batch))
 		for filename := range batch { updated = append(updated, Updated{filename: filename}) }
 
-		if err := client.remote.Update(updated); err == nil {
+		if err := client.remote.Update(updated).Result(); err == nil {
 			for filename := range batch { synced[filename] = true }
 		} else {
 			client.logger.Error(err.Error())
@@ -504,6 +521,7 @@ func (client *SSHMirror) Run() {
 	var syncing sync.Mutex
 	var cancelFirst *context.CancelFunc
 	var cancelLast *context.CancelFunc
+	modifiedFiles := SwitchChannelFilenames{}.New()
 
 	exit := make(chan os.Signal)
 	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
@@ -538,7 +556,7 @@ func (client *SSHMirror) Run() {
 			return
 		}
 
-		client.sync(&queue)
+		client.sync(&queue, modifiedFiles)
 
 		if queue.IsEmpty() { client.onReady() }
 	}
@@ -553,15 +571,16 @@ func (client *SSHMirror) Run() {
 			client.logger.Error(err.Error())
 			// TODO: fallback
 		}
+		for _, filename := range modification.AffectedFiles() { modifiedFiles.Put(filename) }
 	}
 
-	select {
-		case modification, ok := <-client.watcher.Modifications():
-			if !ok { panic("modifications channel closed") }
-			modificationReceived(modification)
-		default:
-			client.onReady()
-	}
+	//select {
+	//	case modification, ok := <-client.watcher.Modifications():
+	//		if !ok { panic("modifications channel closed") }
+	//		modificationReceived(modification)
+	//	default:
+	//		client.onReady()
+	//}
 
 	for {
 		select {
@@ -571,7 +590,7 @@ func (client *SSHMirror) Run() {
 		}
 	}
 }
-func (client *SSHMirror) sync(queue *TransactionalQueue) { // THINK: limit of tries
+func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles SwitchChannelFilenames) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
 	Must(queue.Optimize()) // THINK: fallback
 
@@ -580,9 +599,12 @@ func (client *SSHMirror) sync(queue *TransactionalQueue) { // THINK: limit of tr
 			queue.Begin()
 			moved := queue.moved
 			queue.moved = []Moved{}
+			client.logger.Debug("moved", moved)
 			if err := client.remote.Move(moved); err == nil {
+				client.logger.Debug("success")
 				queue.Commit()
 			} else {
+				client.logger.Debug("fail")
 				client.logger.Error(err.Error())
 				queue.Rollback()
 			}
@@ -593,9 +615,12 @@ func (client *SSHMirror) sync(queue *TransactionalQueue) { // THINK: limit of tr
 			queue.Begin()
 			deleted := queue.deleted
 			queue.deleted = []Deleted{}
+			client.logger.Debug("deleted", deleted)
 			if err := client.remote.Delete(deleted); err == nil {
+				client.logger.Debug("success")
 				queue.Commit()
 			} else {
+				client.logger.Debug("fail")
 				client.logger.Error(err.Error())
 				queue.Rollback()
 			}
@@ -607,9 +632,38 @@ func (client *SSHMirror) sync(queue *TransactionalQueue) { // THINK: limit of tr
 			queue.Begin()
 			updated := queue.updated
 			queue.updated = []Updated{}
-			if err := client.remote.Update(updated); err == nil {
+			client.logger.Debug("updated", updated)
+			command := client.remote.Update(updated)
+			commandDone := make(chan struct{}, 0) // TODO: check
+			var goroutineStarted Locker
+			goroutineStarted.Lock()
+			go func() {
+				goroutineStarted.Unlock()
+				for {
+					select {
+						case modifiedFile, ok := <-modifiedFiles.Get():
+							if !ok { panic("modifiedFiles channel closed") }
+							for _, _updated := range updated { // MAYBE: map
+								if modifiedFile == _updated.filename {
+									client.logger.Debug("cancelling upload. Modified file", modifiedFile)
+									command.Cancel()
+								}
+							}
+						case <-commandDone:
+							return
+					}
+				}
+			}()
+			goroutineStarted.Wait()
+			modifiedFiles.On()
+			err := command.Result()
+			modifiedFiles.Off()
+			close(commandDone)
+			if err == nil {
+				client.logger.Debug("success")
 				queue.Commit()
 			} else {
+				client.logger.Debug("fail")
 				client.logger.Error(err.Error())
 				queue.Rollback()
 			}

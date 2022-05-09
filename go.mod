@@ -3,7 +3,7 @@ module github.com/0leksandr/sshmirror
 go 1.17
 
 require (
-	github.com/0leksandr/my.go v1.3.11
+	github.com/0leksandr/my.go v1.4.0
 	github.com/fsnotify/fsnotify v1.5.3
 )
 

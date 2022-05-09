@@ -6,14 +6,16 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
 type RemoteClient interface {
 	io.Closer
 	LoggerAware
-	Update([]Updated) error
+	Update([]Updated) CancellableContext
 	Delete([]Deleted) error
 	Move([]Moved) error
 	Ready() *Locker
@@ -66,13 +68,13 @@ func (client *sshClient) Close() error {
 	_ = os.Remove(client.controlPath)
 	return nil
 }
-func (client *sshClient) Update(updated []Updated) error {
+func (client *sshClient) Update(updated []Updated) CancellableContext {
 	escapedFilenames := make([]string, 0, len(updated))
 	for _, modification := range updated {
 		escapedFilenames = append(escapedFilenames, modification.filename.Escaped())
 	}
 
-	if client.runCommand(
+	command := client.startCommand(
 		fmt.Sprintf(
 			"rsync --checksum --recursive --links --perms --times --group --owner --executability --compress --relative --rsh='%s' -- %s %s:%s",
 			client.sshCmd,
@@ -80,11 +82,14 @@ func (client *sshClient) Update(updated []Updated) error {
 			client.config.remoteHost,
 			client.config.remoteDir,
 		),
+		true,
 		nil,
-	) {
-		return nil
-	} else {
-		return errors.New("could not upload") // MAYBE: actual error
+	)
+	return CancellableContext{
+		Result: func() error { return command.Wait() }, // TODO: ensure an error is returned on cancel
+		Cancel: func() {
+			if !command.ProcessState.Exited() { Must(command.Process.Signal(syscall.SIGTERM)) }
+		},
 	}
 }
 func (client *sshClient) Delete(deleted []Deleted) error {
@@ -138,6 +143,7 @@ func (client *sshClient) keepMasterConnection() {
 				client.config.connTimeout,
 				client.config.remoteHost,
 			),
+			false,
 			func(out string) {
 				fmt.Println(out)
 				client.logger.Debug("master ready")
@@ -154,19 +160,22 @@ func (client *sshClient) keepMasterConnection() {
 func (client *sshClient) closeMaster() {
 	client.runCommand(
 		fmt.Sprintf("%s -O exit %s 2>/dev/null", client.sshCmd, client.config.remoteHost),
+		false,
 		nil,
 	)
 }
-func (client *sshClient) runCommand(command string, onStdout func(string)) bool {
+func (client *sshClient) runCommand(command string, localDir bool, onStdout func(string)) bool {
+	return client.startCommand(command, localDir, onStdout).Wait() == nil
+}
+func (client *sshClient) startCommand(command string, localDir bool, onStdout func(string)) *exec.Cmd {
 	client.logger.Debug("running command", command)
-
-	return RunCommand(
-		client.config.localDir,
+	var dir string
+	if localDir { dir = client.config.localDir }
+	return StartCommand(
+		dir,
 		command,
 		onStdout,
-		func(err string) {
-			client.logger.Error(fmt.Sprintf("command: %s; error: %s", command, err))
-		},
+		func(err string) { client.logger.Error(fmt.Sprintf("command: %s; error: %s", command, err)) },
 	)
 }
 func (client *sshClient) runRemoteCommand(command string) bool {
@@ -178,6 +187,7 @@ func (client *sshClient) runRemoteCommand(command string) bool {
 			client.config.remoteDir,
 			escapeApostrophe(command),
 		),
+		false,
 		nil,
 	)
 }

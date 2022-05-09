@@ -385,13 +385,13 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b, cExt Filename) TestModificationCase {
+		(func(a, b, cExt Filename) TestModificationCase { // group begin: tricky Watcher cases
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: []Filename{a},
 					after: TestModificationsList{
 						TestSimpleModification{move(a, cExt)},
-						TestSimpleModification{write(b)},
+						TestSimpleModification{create(b)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -408,6 +408,49 @@ func basicModificationCases() []TestModificationCase {
 				},
 			}
 		})(generateFilename(true), generateFilename(true), generateFilename(false)),
+		(func(a, bExt, cExt Filename) TestModificationCase {
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: []Filename{a, cExt},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, bExt)},
+						TestSimpleModification{move(cExt, a)},
+					},
+				},
+				expectedModifications: []Modification{
+					Deleted{filename: a},
+					Updated{filename: a},
+				},
+				expectedQueue: &ModificationsQueue{
+					updated: []Updated{
+						{filename: a},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(false), generateFilename(false)),
+		(func(a, bExt, c Filename) TestModificationCase {
+			return TestModificationCase{
+				chain: TestModificationChain{
+					before: []Filename{a},
+					after: TestModificationsList{
+						TestSimpleModification{move(a, bExt)},
+						TestSimpleModification{move(bExt, c)},
+					},
+				},
+				expectedModifications: []Modification{
+					Deleted{filename: a},
+					Updated{filename: c},
+				},
+				expectedQueue: &ModificationsQueue{
+					updated: []Updated{
+						{filename: c},
+					},
+					deleted: []Deleted{
+						{filename: a},
+					},
+				},
+			}
+		})(generateFilename(true), generateFilename(false), generateFilename(true)), // group end
 		(func(a, bExt, cExt Filename) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
