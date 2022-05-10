@@ -23,9 +23,11 @@ type ErrorLogger interface {
 	Error(string)
 }
 
-type StdErrLogger struct {}
+type StdErrLogger struct {
+	formatter LogFormatter
+}
 func (logger StdErrLogger) Error(err string) {
-	my.WriteToStderr(err)
+	my.WriteToStderr(logger.formatter.Format(err)[0])
 }
 
 type ErrorCmdLogger struct {

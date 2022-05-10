@@ -96,23 +96,23 @@ type SwitchChannelFilenames struct {
 	on bool
 	ch chan Filename
 }
-func (SwitchChannelFilenames) New() SwitchChannelFilenames {
-	return SwitchChannelFilenames{
+func (SwitchChannelFilenames) New() *SwitchChannelFilenames {
+	return &SwitchChannelFilenames{
 		on: false,
 		ch: make(chan Filename), // MAYBE: buffer
 	}
 }
-func (c SwitchChannelFilenames) On() {
+func (c *SwitchChannelFilenames) On() {
 	c.on = true
 }
-func (c SwitchChannelFilenames) Off() {
+func (c *SwitchChannelFilenames) Off() {
 	c.on = false
 	for len(c.ch) > 0 { <-c.ch }
 }
-func (c SwitchChannelFilenames) Put(filename Filename) {
+func (c *SwitchChannelFilenames) Put(filename Filename) {
 	if c.on { c.ch <- filename }
 }
-func (c SwitchChannelFilenames) Get() <-chan Filename {
+func (c *SwitchChannelFilenames) Get() <-chan Filename {
 	return c.ch
 }
 
@@ -591,7 +591,7 @@ func (client *SSHMirror) Run() {
 		}
 	}
 }
-func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles SwitchChannelFilenames) { // THINK: limit of tries
+func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchChannelFilenames) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
 	Must(queue.Optimize()) // THINK: fallback
 
@@ -664,8 +664,10 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles SwitchCha
 				client.logger.Debug("success")
 				queue.Commit()
 			} else {
-				client.logger.Debug("fail")
-				client.logger.Error(err.Error())
+				if err.Error() != "signal: terminated" { // MAYBE: something smarter
+					client.logger.Debug("fail")
+					client.logger.Error(err.Error())
+				}
 				queue.Rollback()
 			}
 			syncMoved()

@@ -87,9 +87,7 @@ func (client *sshClient) Update(updated []Updated) CancellableContext {
 	)
 	return CancellableContext{
 		Result: func() error { return command.Wait() }, // TODO: ensure an error is returned on cancel
-		Cancel: func() {
-			if !command.ProcessState.Exited() { Must(command.Process.Signal(syscall.SIGTERM)) }
-		},
+		Cancel: func() { Must(command.Process.Signal(syscall.SIGTERM)) },
 	}
 }
 func (client *sshClient) Delete(deleted []Deleted) error {
