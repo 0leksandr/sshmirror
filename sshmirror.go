@@ -24,7 +24,6 @@ import (
 // TODO: ignore special types of files (pipes, block devices etc.)
 // TODO: support directories
 // TODO: support scp without rsync
-// MAYBE: move+remove with one operation
 // MAYBE: support symlinks
 // MAYBE: automatically adjust timeout based on server response rate
 // MAYBE: copy permissions
@@ -214,20 +213,15 @@ func (manager RemoteManager) Update(updated []Updated) CancellableContext {
 		Cancel: cmdContext.Cancel,
 	}
 }
-func (manager RemoteManager) Delete(deleted []Deleted) error {
-	deletedFilenames := make([]Filename, 0, len(deleted))
-	for _, _deleted := range deleted { deletedFilenames = append(deletedFilenames, _deleted.filename) }
+func (manager RemoteManager) InPlace(modifications []InPlaceModification) error {
+	movedFilenames := make([]Filename, 0, len(modifications))
+	for _, modification := range modifications {
+		movedFilenames = append(movedFilenames, modification.ChangedFilename())
+	}
+
 	return manager.sync(
-		manager.message(deletedFilenames, "-", "deleting"),
-		func() error { return manager.RemoteClient.Delete(deleted) },
-	)
-}
-func (manager RemoteManager) Move(moved []Moved) error {
-	movedFilenames := make([]Filename, 0, len(moved))
-	for _, _moved := range moved { movedFilenames = append(movedFilenames, _moved.from) }
-	return manager.sync(
-		manager.message(movedFilenames, "^", "moving"),
-		func() error { return manager.RemoteClient.Move(moved) },
+		manager.message(movedFilenames, "^", "(re)moving"),
+		func() error { return manager.RemoteClient.InPlace(modifications) },
 	)
 }
 func (manager RemoteManager) Ready() *Locker { // MAYBE: remove
@@ -264,7 +258,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 		return !os.IsNotExist(err)
 	}
 	updated := make([]Updated, 0)
-	deleted := make([]Deleted, 0)
+	deleted := make([]InPlaceModification, 0)
 	for file := range filesUnique {
 		if fileExists(Filename(manager.localDir + string(os.PathSeparator)) + file) {
 			updated = append(updated, Updated{filename: file})
@@ -276,7 +270,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 	result := true
 	if verbosity == 0 {
 		if len(updated) > 0 { result = result && (manager.RemoteClient.Update(updated).Result() == nil) }
-		if len(deleted) > 0 { result = result && (manager.RemoteClient.Delete(deleted) == nil) }
+		if len(deleted) > 0 { result = result && (manager.RemoteClient.InPlace(deleted) == nil) }
 	} else {
 		if len(updated) > 0 {
 			var uploadMessage string
@@ -304,13 +298,13 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 				uploadMessage = fmt.Sprintf("deleting %d file(s)", len(deleted))
 				if verbosity == 3 {
 					deletedStr := make([]string, 0, len(deleted))
-					for _, d := range deleted { deletedStr = append(deletedStr, d.filename.Real()) }
+					for _, d := range deleted { deletedStr = append(deletedStr, d.ChangedFilename().Real()) }
 					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(deletedStr, " "))
 				}
 			}
 			result = stopwatch(
 				uploadMessage,
-				func() error { return manager.RemoteClient.Delete(deleted) },
+				func() error { return manager.RemoteClient.InPlace(deleted) },
 			) == nil
 		}
 	}
@@ -595,29 +589,16 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchCh
 	client.logger.Debug("sync.queue", queue)
 	Must(queue.Optimize()) // THINK: fallback
 
-	syncMoved := func() {
-		for len(queue.moved) > 0 {
+	syncInPlace := func() {
+		for len(queue.moved) + len(queue.deleted) > 0 {
 			queue.Begin()
-			moved := queue.moved
+			inPlace := make([]InPlaceModification, 0, len(queue.moved) + len(queue.deleted))
+			for _, moved := range queue.moved { inPlace = append(inPlace, moved) }
+			for _, deleted := range queue.deleted { inPlace = append(inPlace, deleted) }
 			queue.moved = []Moved{}
-			client.logger.Debug("moved", moved)
-			if err := client.remote.Move(moved); err == nil {
-				client.logger.Debug("success")
-				queue.Commit()
-			} else {
-				client.logger.Debug("fail")
-				client.logger.Error(err.Error())
-				queue.Rollback()
-			}
-		}
-	}
-	syncDeleted := func() {
-		for len(queue.deleted) > 0 {
-			queue.Begin()
-			deleted := queue.deleted
 			queue.deleted = []Deleted{}
-			client.logger.Debug("deleted", deleted)
-			if err := client.remote.Delete(deleted); err == nil {
+			client.logger.Debug("inPlace", inPlace)
+			if err := client.remote.InPlace(inPlace); err == nil {
 				client.logger.Debug("success")
 				queue.Commit()
 			} else {
@@ -625,7 +606,6 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchCh
 				client.logger.Error(err.Error())
 				queue.Rollback()
 			}
-			syncMoved()
 		}
 	}
 	syncUpdated := func() {
@@ -670,13 +650,11 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchCh
 				}
 				queue.Rollback()
 			}
-			syncMoved()
-			syncDeleted()
+			syncInPlace()
 		}
 	}
 	for !queue.IsEmpty() {
-		syncMoved()
-		syncDeleted()
+		syncInPlace()
 		syncUpdated()
 	}
 }

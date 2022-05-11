@@ -16,8 +16,7 @@ type RemoteClient interface {
 	io.Closer
 	LoggerAware
 	Update([]Updated) CancellableContext
-	Delete([]Deleted) error
-	Move([]Moved) error
+	InPlace([]InPlaceModification) error
 	Ready() *Locker
 }
 
@@ -28,6 +27,7 @@ type sshClient struct { // TODO: rename
 	sshCmd      string
 	controlPath string
 	masterReady *Locker
+	commander   RemoteCommander
 	done        bool // MAYBE: masterConnectionProcess
 	logger      Logger
 }
@@ -51,6 +51,7 @@ func (sshClient) New(config Config) *sshClient {
 		sshCmd:      sshCmd,
 		controlPath: controlPath,
 		masterReady: &waitingMaster,
+		commander:   UnixCommander{},
 		logger:      Logger{
 			debug: NullLogger{},
 			error: StdErrLogger{},
@@ -87,38 +88,22 @@ func (client *sshClient) Update(updated []Updated) CancellableContext {
 	)
 	return CancellableContext{
 		Result: func() error { return command.Wait() }, // TODO: ensure an error is returned on cancel
-		Cancel: func() { Must(command.Process.Signal(syscall.SIGTERM)) },
+		Cancel: func() {
+			err := command.Process.Signal(syscall.SIGTERM)
+			if err != nil && err.Error() != "os: process already finished" { PanicIf(err) }
+		},
 	}
 }
-func (client *sshClient) Delete(deleted []Deleted) error {
-	escapedFilenames := make([]string, 0, len(deleted))
-	for _, modification := range deleted {
-		escapedFilenames = append(escapedFilenames, modification.filename.Escaped())
-	}
-
-	if client.runRemoteCommand(fmt.Sprintf(
-		"rm -rf -- %s", // MAYBE: something more reliable
-		strings.Join(escapedFilenames, " "),
-	)) {
-		return nil
-	} else {
-		return errors.New("cound not delete") // MAYBE: actual error
-	}
-}
-func (client *sshClient) Move(moved []Moved) error {
-	commands := make([]string, 0, len(moved))
-	for _, modification := range moved {
-		commands = append(commands, fmt.Sprintf(
-			"mv -- %s %s",
-			modification.from.Escaped(),
-			modification.to.Escaped(),
-		))
+func (client *sshClient) InPlace(modifications []InPlaceModification) error {
+	commands := make([]string, 0, len(modifications))
+	for _, modification := range modifications {
+		commands = append(commands, modification.Command(client.commander))
 	}
 
 	if client.runRemoteCommand(strings.Join(commands, " && ")) {
 		return nil
 	} else {
-		return errors.New("could not move") // MAYBE: actual error
+		return errors.New("could not apply in-place modifications") // MAYBE: actual error
 	}
 }
 func (client *sshClient) Ready() *Locker {

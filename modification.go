@@ -139,6 +139,23 @@ func (moved Moved) AffectedFiles() []Filename {
 	return []Filename{moved.from, moved.to}
 }
 
+type InPlaceModification interface { // MAYBE: rename
+	Command(commander RemoteCommander) string
+	ChangedFilename() Filename
+}
+func (deleted Deleted) Command(commander RemoteCommander) string {
+	return commander.DeleteCommand(deleted.filename)
+}
+func (deleted Deleted) ChangedFilename() Filename {
+	return deleted.filename
+}
+func (moved Moved) Command(commander RemoteCommander) string {
+	return commander.MoveCommand(moved.from, moved.to)
+}
+func (moved Moved) ChangedFilename() Filename {
+	return moved.from
+}
+
 type ModificationsQueue struct {
 	// MAYBE: map filename: modification. For moved, key is moved.to
 	updated []Updated
