@@ -164,11 +164,11 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Updated{filename: a},
+					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -183,18 +183,12 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Deleted{filename: a},
-					Moved{
-						from: b,
-						to:   a,
-					},
+					Deleted{a},
+					Moved{b, a},
 				},
 				expectedQueue: &ModificationsQueue{
 					moved: []Moved{
-						{
-							from: b,
-							to:   a,
-						},
+						{b, a},
 					},
 				},
 			}
@@ -214,17 +208,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Updated{filename: a},
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Deleted{filename: b},
+					Updated{a},
+					Moved{a, b},
+					Deleted{b},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: a},
-						{filename: b},
+						{a},
+						{b},
 					},
 				},
 			}
@@ -239,24 +230,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Moved{
-						from: b,
-						to:   c,
-					},
+					Moved{a, b},
+					Moved{b, c},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: b},
+						{b},
 					},
 					moved: []Moved{
-						{
-							from: a,
-							to:   c,
-						},
+						{a, c},
 					},
 				},
 			}
@@ -271,21 +253,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: a},
+					Moved{a, b},
+					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					moved: []Moved{
-						{
-							from: a,
-							to:   b,
-						},
+						{a, b},
 					},
 					updated: []Updated{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -301,17 +277,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: b},
-					Updated{filename: a},
+					Moved{a, b},
+					Updated{b},
+					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: b}, // MAYBE: ignore order
-						{filename: a},
+						{b}, // MAYBE: ignore order
+						{a},
 					},
 				},
 			}
@@ -327,25 +300,16 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: b},
-					Moved{
-						from: c,
-						to:   a,
-					},
+					Moved{a, b},
+					Updated{b},
+					Moved{c, a},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: b},
+						{b},
 					},
 					moved: []Moved{
-						{
-							from: c,
-							to:   a,
-						},
+						{c, a},
 					},
 				},
 			}
@@ -361,26 +325,17 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   c,
-					},
-					Moved{
-						from: b,
-						to:   a,
-					},
-					Moved{
-						from: c,
-						to:   b,
-					},
+					Moved{a, c},
+					Moved{b, a},
+					Moved{c, b},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: a},
-						{filename: b},
+						{a},
+						{b},
 					},
 					deleted: []Deleted{
-						{filename: c},
+						{c},
 					},
 				},
 			}
@@ -395,15 +350,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Deleted{filename: a},
-					Updated{filename: b},
+					Deleted{a},
+					Updated{b},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: b},
+						{b},
 					},
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -418,12 +373,12 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Deleted{filename: a},
-					Updated{filename: a},
+					Deleted{a},
+					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -438,15 +393,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Deleted{filename: a},
-					Updated{filename: c},
+					Deleted{a},
+					Updated{c},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: c},
+						{c},
 					},
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -463,13 +418,13 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Updated{filename: a},
-					Updated{filename: a},
-					Deleted{filename: a},
+					Updated{a},
+					Updated{a},
+					Deleted{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -484,25 +439,13 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: b,
-						to:   c,
-					},
-					Moved{
-						from: a,
-						to:   b,
-					},
+					Moved{b, c},
+					Moved{a, b},
 				},
 				expectedQueue: &ModificationsQueue{
 					moved: []Moved{
-						{
-							from: b,
-							to:   c,
-						},
-						{
-							from: a,
-							to:   b,
-						},
+						{b, c},
+						{a, b},
 					},
 				},
 			}
@@ -518,25 +461,16 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: b,
-						to:   c,
-					},
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: c},
+					Moved{b, c},
+					Moved{a, b},
+					Updated{c},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: c},
+						{c},
 					},
 					moved: []Moved{
-						{
-							from: a,
-							to:   b,
-						},
+						{a, b},
 					},
 				},
 			}
@@ -552,28 +486,19 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: b,
-						to:   c,
-					},
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: b},
+					Moved{b, c},
+					Moved{a, b},
+					Updated{b},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 					updated: []Updated{
-						{filename: b},
+						{b},
 					},
 					moved: []Moved{
-						{
-							from: b,
-							to:   c,
-						},
+						{b, c},
 					},
 				},
 			}
@@ -589,21 +514,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Moved{
-						from: b,
-						to:   c,
-					},
-					Deleted{filename: c},
+					Moved{a, b},
+					Moved{b, c},
+					Deleted{c},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: b},
-						{filename: a},
-						{filename: c},
+						{b},
+						{a},
+						{c},
 					},
 				},
 			}
@@ -618,18 +537,12 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Moved{
-						from: b,
-						to:   a,
-					},
+					Moved{a, b},
+					Moved{b, a},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: b},
+						{b},
 					},
 				},
 			}
@@ -644,12 +557,12 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Deleted{filename: a},
-					Updated{filename: a},
+					Deleted{a},
+					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -664,15 +577,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Deleted{filename: a},
-					Updated{filename: c},
+					Deleted{a},
+					Updated{c},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 					updated: []Updated{
-						{filename: c},
+						{c},
 					},
 				},
 			}
@@ -688,17 +601,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: a},
-					Updated{filename: b},
+					Moved{a, b},
+					Updated{a},
+					Updated{b},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: a},
-						{filename: b},
+						{a},
+						{b},
 					},
 				},
 			}
@@ -713,21 +623,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: a},
+					Moved{a, b},
+					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					moved: []Moved{
-						{
-							from: a,
-							to:   b,
-						},
+						{a, b},
 					},
 					updated: []Updated{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -742,18 +646,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: b},
+					Moved{a, b},
+					Updated{b},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: b},
+						{b},
 					},
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -769,19 +670,16 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
+					Moved{a, b},
 					Updated{a},
 					Deleted{b},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: a},
+						{a},
 					},
 					deleted: []Deleted{
-						{filename: b},
+						{b},
 					},
 				},
 			}
@@ -796,16 +694,13 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
+					Moved{a, b},
 					Deleted{b},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: a},
-						{filename: b},
+						{a},
+						{b},
 					},
 				},
 			}
@@ -821,25 +716,16 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: a},
-					Moved{
-						from: c,
-						to:   b,
-					},
+					Moved{a, b},
+					Updated{a},
+					Moved{c, b},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: a},
+						{a},
 					},
 					moved: []Moved{
-						{
-							from: c,
-							to:   b,
-						},
+						{c, b},
 					},
 				},
 			}
@@ -854,24 +740,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Moved{
-						from: c,
-						to:   b,
-					},
+					Moved{a, b},
+					Moved{c, b},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 					moved: []Moved{
-						{
-							from: c,
-							to:   b,
-						},
+						{c, b},
 					},
 				},
 			}
@@ -889,21 +766,18 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Deleted{filename: a},
-					Updated{filename: a},
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: a},
-					Deleted{filename: a},
+					Deleted{a},
+					Updated{a},
+					Moved{a, b},
+					Updated{a},
+					Deleted{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: b},
+						{b},
 					},
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -918,18 +792,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Updated{filename: a},
-					Moved{
-						from: a,
-						to:   b,
-					},
+					Updated{a},
+					Moved{a, b},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: b},
+						{b},
 					},
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -945,19 +816,16 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Deleted{filename: a},
-					Updated{filename: a},
-					Moved{
-						from: a,
-						to:   b,
-					},
+					Deleted{a},
+					Updated{a},
+					Moved{a, b},
 				},
 				expectedQueue: &ModificationsQueue{
 					updated: []Updated{
-						{filename: b},
+						{b},
 					},
 					deleted: []Deleted{
-						{filename: a},
+						{a},
 					},
 				},
 			}
@@ -973,22 +841,16 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 				expectedModifications: []Modification{
-					Moved{
-						from: a,
-						to:   b,
-					},
-					Updated{filename: a},
-					Deleted{filename: a},
+					Moved{a, b},
+					Updated{a},
+					Deleted{a},
 				},
 				expectedQueue: &ModificationsQueue{
 					deleted: []Deleted{
-						{filename: a}, // MAYBE: fix
+						{a}, // MAYBE: fix
 					},
 					moved: []Moved{
-						{
-							from: a,
-							to:   b,
-						},
+						{a, b},
 					},
 				},
 			}
