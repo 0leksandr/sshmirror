@@ -329,32 +329,34 @@ func (watcher *InotifyWatcher) SetLogger(logger Logger) {
 }
 func (watcher *InotifyWatcher) getNrFiles(root string) (uint64, error) {
 	var nrFiles uint64
-	done := make(chan struct{}, 1)
+	done := Locker{}
+	done.Lock()
 	var errStopwatch error
-	doNotWrite := cancellableTimer(
+	doNotStartStopwatch := cancellableTimer(
 		1 * time.Second,
 		func() {
-			//fmt.Println("Calculating number of files in watched directory")
 			errStopwatch = stopwatch(
 				"Calculating number of files in watched directory",
 				func() error {
-					select { case <-done: return nil }
+					done.Wait()
+					return nil
 				},
 			)
-			if errStopwatch == nil {
-				fmt.Printf("%d files must be watched in total\n", nrFiles)
-			}
+			fmt.Println(fmt.Sprintf("%d files must be watched in total", nrFiles))
 		},
 	)
-	command := exec.Command("find", root, "-type", "f") // MAYBE: `wc -l`
-	out, err := command.StdoutPipe()
-	if err != nil { return 0, err }
-	buffer := bufio.NewScanner(out)
-	err = command.Start()
-	if err != nil { return 0, err }
-	for buffer.Scan() { nrFiles++ }
-	(*doNotWrite)()
-	done <- struct{}{}
+	my.RunCommand(
+		root,
+		"find . -type f |wc -l",
+		func(out string) {
+			var err error
+			nrFiles, err = strconv.ParseUint(out, 10, 64)
+			PanicIf(err)
+		},
+		WriteToStderr,
+	)
+	(*doNotStartStopwatch)()
+	done.Unlock()
 	if errStopwatch != nil { return 0, errStopwatch }
 	return nrFiles, nil
 }
