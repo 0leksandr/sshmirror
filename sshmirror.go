@@ -238,12 +238,9 @@ func (manager RemoteManager) SetLogger(logger Logger) {
 }
 func (manager RemoteManager) Fallback(queue *ModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
-	for _, updated := range queue.updated { files = append(files, updated.filename) }
-	for _, deleted := range queue.deleted { files = append(files, deleted.filename) }
-	for _, moved := range queue.moved {
-		files = append(files, moved.from)
-		files = append(files, moved.to)
-	}
+	queue.fs.changes.Each(func(key interface{}, value interface{}) {
+		files = append(files, key.(Node).Filename())
+	})
 
 	manager.fallbackFiles(files)
 }
@@ -593,55 +590,40 @@ func (client *SSHMirror) Run() {
 }
 func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchChannelFilenames) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
-	Must(queue.Optimize()) // THINK: fallback
 
-	syncMoved := func() {
-		for len(queue.moved) > 0 {
+	main: for {
+		for {
 			queue.Begin()
-			moved := queue.moved
-			queue.moved = []Moved{}
-			client.logger.Debug("moved", moved)
-			if err := client.remote.Move(moved); err == nil {
-				client.logger.Debug("success")
-				queue.Commit()
-			} else {
-				client.logger.Debug("fail")
-				client.logger.Error(err.Error())
-				queue.Rollback()
+			if inPlaceModifications := queue.fs.FlushInPlaceModifications(); len(inPlaceModifications) > 0 {
+				// sync
+				client.logger.Debug("inPlaceModifications", inPlaceModifications)
+
+				if err := client.remote.InPlace(inPlaceModifications); err == nil {
+					client.logger.Debug("success")
+					queue.Commit()
+				} else {
+					client.logger.Debug("fail")
+					client.logger.Error(err.Error())
+					queue.Rollback()
+				}
+
+				continue main
 			}
+			queue.Commit()
+			break
 		}
-	}
-	syncDeleted := func() {
-		for len(queue.deleted) > 0 {
+		for {
 			queue.Begin()
-			deleted := queue.deleted
-			queue.deleted = []Deleted{}
-			client.logger.Debug("deleted", deleted)
-			if err := client.remote.Delete(deleted); err == nil {
-				client.logger.Debug("success")
-				queue.Commit()
-			} else {
-				client.logger.Debug("fail")
-				client.logger.Error(err.Error())
-				queue.Rollback()
-			}
-			syncMoved()
-		}
-	}
-	syncUpdated := func() {
-		for len(queue.updated) > 0 {
-			queue.Begin()
-			updated := queue.updated
-			queue.updated = []Updated{}
-			client.logger.Debug("updated", updated)
-			command := client.remote.Update(updated)
-			commandDone := make(chan struct{}, 0) // TODO: check
-			var goroutineStarted Locker
-			goroutineStarted.Lock()
-			go func() {
-				goroutineStarted.Unlock()
-				for {
-					select {
+			if updated := queue.fs.FlushUpdated(); len(updated) > 0 {
+				client.logger.Debug("updated", updated)
+				command := client.remote.Update(updated)
+				commandDone := make(chan struct{}, 0) // TODO: check
+				var goroutineStarted Locker
+				goroutineStarted.Lock()
+				go func() {
+					goroutineStarted.Unlock()
+					for {
+						select {
 						case modifiedFile, ok := <-modifiedFiles.Get():
 							if !ok { panic("modifiedFiles channel closed") }
 							for _, _updated := range updated { // MAYBE: map
@@ -652,32 +634,31 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchCh
 							}
 						case <-commandDone:
 							return
+						}
 					}
+				}()
+				goroutineStarted.Wait()
+				modifiedFiles.On()
+				err := command.Result()
+				modifiedFiles.Off()
+				close(commandDone)
+				if err == nil {
+					client.logger.Debug("success")
+					queue.Commit()
+				} else {
+					if err.Error() != "signal: terminated" { // MAYBE: something smarter
+						client.logger.Debug("fail")
+						client.logger.Error(err.Error())
+					}
+					queue.Rollback()
 				}
-			}()
-			goroutineStarted.Wait()
-			modifiedFiles.On()
-			err := command.Result()
-			modifiedFiles.Off()
-			close(commandDone)
-			if err == nil {
-				client.logger.Debug("success")
-				queue.Commit()
-			} else {
-				if err.Error() != "signal: terminated" { // MAYBE: something smarter
-					client.logger.Debug("fail")
-					client.logger.Error(err.Error())
-				}
-				queue.Rollback()
+
+				continue main
 			}
-			syncMoved()
-			syncDeleted()
+			queue.Commit()
+			break
 		}
-	}
-	for !queue.IsEmpty() {
-		syncMoved()
-		syncDeleted()
-		syncUpdated()
+		break
 	}
 }
 

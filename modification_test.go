@@ -7,15 +7,19 @@ import (
 
 func TestModificationsQueue_Optimize(t *testing.T) {
 	for i, testCase := range basicModificationCases() {
-		queue := ModificationsQueue{}
+		queue := ModificationsQueue{}.New()
 		for _, modification := range testCase.expectedModifications {
 			Must(queue.Add(modification))
 		}
-		Must(queue.Optimize())
+		transferQueue := TransferQueue{
+			inPlace: queue.fs.FlushInPlaceModifications(),
+			updated: queue.fs.FlushUpdated(),
+		}
+		my.Assert(t, queue.IsEmpty())
 		my.Assert(
 			t,
-			queue.Equals(testCase.expectedQueue),
-			i, testCase, testCase.expectedQueue, &queue,
+			transferQueue.Equals(testCase.expectedQueue),
+			i, testCase, testCase.expectedQueue, transferQueue,
 		)
 	}
 }
