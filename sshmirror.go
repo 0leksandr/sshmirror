@@ -232,12 +232,9 @@ func (manager RemoteManager) SetLogger(logger Logger) {
 }
 func (manager RemoteManager) Fallback(queue *ModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
-	for _, updated := range queue.updated { files = append(files, updated.filename) }
-	for _, deleted := range queue.deleted { files = append(files, deleted.filename) }
-	for _, moved := range queue.moved {
-		files = append(files, moved.from)
-		files = append(files, moved.to)
-	}
+	queue.fs.changes.Each(func(key interface{}, value interface{}) {
+		files = append(files, key.(Node).Filename())
+	})
 
 	manager.fallbackFiles(files)
 }
@@ -587,41 +584,40 @@ func (client *SSHMirror) Run() {
 }
 func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchChannelFilenames) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
-	Must(queue.Optimize()) // THINK: fallback
 
-	syncInPlace := func() {
-		for len(queue.moved) + len(queue.deleted) > 0 {
+	main: for {
+		for {
 			queue.Begin()
-			inPlace := make([]InPlaceModification, 0, len(queue.moved) + len(queue.deleted))
-			for _, moved := range queue.moved { inPlace = append(inPlace, moved) }
-			for _, deleted := range queue.deleted { inPlace = append(inPlace, deleted) }
-			queue.moved = []Moved{}
-			queue.deleted = []Deleted{}
-			client.logger.Debug("inPlace", inPlace)
-			if err := client.remote.InPlace(inPlace); err == nil {
-				client.logger.Debug("success")
-				queue.Commit()
-			} else {
-				client.logger.Debug("fail")
-				client.logger.Error(err.Error())
-				queue.Rollback()
+			if inPlaceModifications := queue.fs.FlushInPlaceModifications(); len(inPlaceModifications) > 0 {
+				// sync
+				client.logger.Debug("inPlaceModifications", inPlaceModifications)
+
+				if err := client.remote.InPlace(inPlaceModifications); err == nil {
+					client.logger.Debug("success")
+					queue.Commit()
+				} else {
+					client.logger.Debug("fail")
+					client.logger.Error(err.Error())
+					queue.Rollback()
+				}
+
+				continue main
 			}
+			queue.Commit()
+			break
 		}
-	}
-	syncUpdated := func() {
-		for len(queue.updated) > 0 {
+		for {
 			queue.Begin()
-			updated := queue.updated
-			queue.updated = []Updated{}
-			client.logger.Debug("updated", updated)
-			command := client.remote.Update(updated)
-			commandDone := make(chan struct{}, 0) // TODO: check
-			var goroutineStarted Locker
-			goroutineStarted.Lock()
-			go func() {
-				goroutineStarted.Unlock()
-				for {
-					select {
+			if updated := queue.fs.FlushUpdated(); len(updated) > 0 {
+				client.logger.Debug("updated", updated)
+				command := client.remote.Update(updated)
+				commandDone := make(chan struct{}, 0) // TODO: check
+				var goroutineStarted Locker
+				goroutineStarted.Lock()
+				go func() {
+					goroutineStarted.Unlock()
+					for {
+						select {
 						case modifiedFile, ok := <-modifiedFiles.Get():
 							if !ok { panic("modifiedFiles channel closed") }
 							for _, _updated := range updated { // MAYBE: map
@@ -632,30 +628,31 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchCh
 							}
 						case <-commandDone:
 							return
+						}
 					}
+				}()
+				goroutineStarted.Wait()
+				modifiedFiles.On()
+				err := command.Result()
+				modifiedFiles.Off()
+				close(commandDone)
+				if err == nil {
+					client.logger.Debug("success")
+					queue.Commit()
+				} else {
+					if err.Error() != "signal: terminated" { // MAYBE: something smarter
+						client.logger.Debug("fail")
+						client.logger.Error(err.Error())
+					}
+					queue.Rollback()
 				}
-			}()
-			goroutineStarted.Wait()
-			modifiedFiles.On()
-			err := command.Result()
-			modifiedFiles.Off()
-			close(commandDone)
-			if err == nil {
-				client.logger.Debug("success")
-				queue.Commit()
-			} else {
-				if err.Error() != "signal: terminated" { // MAYBE: something smarter
-					client.logger.Debug("fail")
-					client.logger.Error(err.Error())
-				}
-				queue.Rollback()
+
+				continue main
 			}
-			syncInPlace()
+			queue.Commit()
+			break
 		}
-	}
-	for !queue.IsEmpty() {
-		syncInPlace()
-		syncUpdated()
+		break
 	}
 }
 
