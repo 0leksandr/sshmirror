@@ -6,7 +6,7 @@ import (
 
 type Modification interface {
 	Join(queue *ModificationsQueue)
-	AffectedFiles() []Filename
+	AffectedPaths() []Path
 }
 // problem with created+updated: impossible to determine which one of the two is a moved file. I.e. a file was moved
 // to a new location. Is it created or updated?
@@ -18,44 +18,50 @@ type Modification interface {
 // requires changing order of operations
 
 type Updated struct { // any file, that must be uploaded // MAYBE: Written
-	filename Filename
+	path Path
 }
 type Deleted struct { // existing file, that was deleted
-	filename Filename
+	path Path
 }
 type Moved struct { // existing file, that was moved to a new location
-	from Filename
-	to   Filename
+	from Path
+	to   Path
 }
 func (updated Updated) Join(queue *ModificationsQueue) {
 	addToQueue := true
 	for _, previouslyUpdated := range queue.updated {
-		if previouslyUpdated.filename == updated.filename {
+		if previouslyUpdated.path.Equals(updated.path) {
 			addToQueue = false
+		} else if previouslyUpdated.path.Relates(updated.path) {
+			inconsistentModifications()
 		}
 	}
 	if addToQueue { queue.updated = append(queue.updated, updated) }
 }
 func (deleted Deleted) Join(queue *ModificationsQueue) {
 	for i, updated := range queue.updated {
-		if updated.filename == deleted.filename {
-			queue.removeUpdated(i)
+		if deleted.path.IsParentOf(updated.path) {
+			queue.removeUpdated(i) // PRIORITY: `i--` or something else appropriate. To this, and ALL other relevant places
+		} else if updated.path.IsParentOf(deleted.path) {
+			inconsistentModifications()
 		}
 	}
 	queue.inPlace = append(queue.inPlace, deleted)
 }
 func (moved Moved) Join(queue *ModificationsQueue) {
-	if moved.from == moved.to { return }
+	if moved.from.Relates(moved.to) { return }
 
 	addToQueue := true
 
 	for i, updated := range queue.updated {
-		if updated.filename == moved.to {
+		if moved.to.IsParentOf(updated.path) {
 			queue.removeUpdated(i)
+		} else if updated.path.IsParentOf(moved.to) {
+			inconsistentModifications()
 		}
 	}
 	for _, updated := range queue.updated {
-		if updated.filename == moved.from { // PRIORITY: handle
+		if updated.path.Equals(moved.from) { // PRIORITY: handle
 			queue.Add(Deleted{moved.from})
 			queue.Add(Updated{moved.to})
 			addToQueue = false
@@ -64,14 +70,14 @@ func (moved Moved) Join(queue *ModificationsQueue) {
 
 	if addToQueue { queue.inPlace = append(queue.inPlace, moved) }
 }
-func (updated Updated) AffectedFiles() []Filename {
-	return []Filename{updated.filename}
+func (updated Updated) AffectedPaths() []Path {
+	return []Path{updated.path}
 }
-func (deleted Deleted) AffectedFiles() []Filename {
-	return []Filename{deleted.filename}
+func (deleted Deleted) AffectedPaths() []Path {
+	return []Path{deleted.path}
 }
-func (moved Moved) AffectedFiles() []Filename {
-	return []Filename{moved.from, moved.to}
+func (moved Moved) AffectedPaths() []Path {
+	return []Path{moved.from, moved.to}
 }
 
 type InPlaceModification interface { // MAYBE: rename
@@ -93,7 +99,7 @@ func (moved Moved) OldFilename() Filename {
 }
 
 type ModificationsQueue struct {
-	// MAYBE: map filename: modification. For moved, key is moved.to
+	// MAYBE: map path: modification. For moved, key is moved.to
 	updated []Updated
 	inPlace []InPlaceModification
 	mutex   sync.Mutex
@@ -129,7 +135,7 @@ func (queue *ModificationsQueue) Equals(other *ModificationsQueue) bool { // MAY
 	}
 
 	for i, updated := range queue.updated {
-		if updated != other.updated[i] { return false }
+		if !updated.path.Equals(other.updated[i].path) { return false }
 	}
 	for i, inPlace := range queue.inPlace {
 		if inPlace != other.inPlace[i] { return false }
@@ -181,4 +187,8 @@ func (queue *TransactionalQueue) queues() []*ModificationsQueue {
 	queues := []*ModificationsQueue{&queue.ModificationsQueue}
 	if queue.backup != nil { queues = append(queues, queue.backup) }
 	return queues
+}
+
+func inconsistentModifications() { // THINK: resolve
+	panic("inconsistent modifications")
 }

@@ -61,12 +61,63 @@ func (locker *Locker) Wait() {
 	locker.wg.Wait()
 }
 
-type Filename string
+type Filename string // TODO: rename. Pathname?
 func (filename Filename) Escaped() string {
 	return wrapApostrophe(string(filename))
 }
 func (filename Filename) Real() string {
 	return string(filename)
+}
+
+type Path struct {
+	original Filename
+	parts    []string
+	isDir    bool
+}
+func (Path) New(original Filename, isDir bool) Path {
+	return Path{
+		original: original,
+		parts:    strings.Split(original.Real(), string(os.PathSeparator)),
+		isDir:    isDir,
+	}
+}
+func (path Path) Equals(other Path) bool {
+	return path.original == other.original
+}
+func (path Path) IsParentOf(other Path) bool {
+	return Path{}.startsWith(path.parts, other.parts)
+}
+func (path Path) Relates(other Path) bool { // MAYBE: rename
+	return path.IsParentOf(other) || other.IsParentOf(path)
+}
+func (Path) startsWith(big, small []string) bool {
+	if len(big) < len(small) { return false }
+	for i, part := range small {
+		if part != big[i] { return false }
+	}
+	return true
+}
+
+type DummyFS struct {
+	files []Path // TODO: optimize by sorting
+}
+func (dummyFS *DummyFS) AddFile(filename Filename) {
+	// TODO: check for existence
+	dummyFS.files = append(dummyFS.files, Path{}.New(filename, false))
+}
+func (dummyFS *DummyFS) Has(path Path) bool {
+	for _, file := range dummyFS.files {
+		if path.IsParentOf(file) { return true }
+	}
+	return false
+}
+func (dummyFS *DummyFS) Delete(path Path) {
+	for i := 0; i < len(dummyFS.files); i++ {
+		if path.IsParentOf(dummyFS.files[i]) {
+			dummyFS.files = my.Remove(dummyFS.files, i).([]Path)
+			i--
+		}
+	}
 }
 
 type FileSize struct {
@@ -91,27 +142,27 @@ type CancellableContext struct { // MAYBE: rename
 	Cancel func()
 }
 
-type SwitchChannelFilenames struct {
+type SwitchChannelPaths struct {
 	on bool
-	ch chan Filename
+	ch chan Path
 }
-func (SwitchChannelFilenames) New() *SwitchChannelFilenames {
-	return &SwitchChannelFilenames{
+func (SwitchChannelPaths) New() *SwitchChannelPaths {
+	return &SwitchChannelPaths{
 		on: false,
-		ch: make(chan Filename), // MAYBE: buffer
+		ch: make(chan Path), // MAYBE: buffer
 	}
 }
-func (c *SwitchChannelFilenames) On() {
+func (c *SwitchChannelPaths) On() {
 	c.on = true
 }
-func (c *SwitchChannelFilenames) Off() {
+func (c *SwitchChannelPaths) Off() {
 	c.on = false
 	for len(c.ch) > 0 { <-c.ch }
 }
-func (c *SwitchChannelFilenames) Put(filename Filename) {
-	if c.on { c.ch <- filename }
+func (c *SwitchChannelPaths) Put(path Path) {
+	if c.on { c.ch <- path }
 }
-func (c *SwitchChannelFilenames) Get() <-chan Filename {
+func (c *SwitchChannelPaths) Get() <-chan Path {
 	return c.ch
 }
 
@@ -196,14 +247,14 @@ func (RemoteManager) New(config Config) RemoteManager {
 		localDir:     config.localDir,
 	}
 }
-func (manager RemoteManager) Update(updated []Updated) CancellableContext {
-	updatedFilenames := make([]Filename, 0, len(updated))
-	for _, _updated := range updated { updatedFilenames = append(updatedFilenames, _updated.filename) }
+func (manager RemoteManager) Update(updated []Updated) CancellableContext { // PRIORITY: merge children/parents
+	updatedPaths := make([]Path, 0, len(updated))
+	for _, _updated := range updated { updatedPaths = append(updatedPaths, _updated.path) }
 	cmdContext := manager.RemoteClient.Update(updated)
 	cmdResult := make(chan error, 1)
 	go func() {
 		cmdResult <- manager.sync(
-			manager.message(updatedFilenames, "+", "uploading"),
+			manager.message(updatedPaths, "+", "uploading"),
 			cmdContext.Result,
 		)
 		close(cmdResult) // TODO: check if it's closed on cancel
@@ -214,13 +265,13 @@ func (manager RemoteManager) Update(updated []Updated) CancellableContext {
 	}
 }
 func (manager RemoteManager) InPlace(modifications []InPlaceModification) error {
-	movedFilenames := make([]Filename, 0, len(modifications))
+	movedPaths := make([]Path, 0, len(modifications))
 	for _, modification := range modifications {
-		movedFilenames = append(movedFilenames, modification.OldFilename())
+		movedPaths = append(movedPaths, modification.OldFilename())
 	}
 
 	return manager.sync(
-		manager.message(movedFilenames, "^", "(re)moving"),
+		manager.message(movedPaths, "^", "(re)moving"),
 		func() error { return manager.RemoteClient.InPlace(modifications) },
 	)
 }
@@ -232,7 +283,7 @@ func (manager RemoteManager) SetLogger(logger Logger) {
 }
 func (manager RemoteManager) Fallback(queue *ModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
-	for _, updated := range queue.updated { files = append(files, updated.filename) }
+	for _, updated := range queue.updated { files = append(files, updated.path.original) }
 	for _, inPlaceModification := range queue.inPlace {
 		for _, filename := range inPlaceModification.AffectedFiles() {
 			files = append(files, filename)
@@ -261,9 +312,15 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 	deleted := make([]InPlaceModification, 0)
 	for file := range filesUnique {
 		if fileExists(Filename(manager.localDir + string(os.PathSeparator)) + file) {
-			updated = append(updated, Updated{filename: file})
+			updated = append(updated, Updated{Path{}.New(
+				file,
+				false, // MAYBE: implement
+			)})
 		} else {
-			deleted = append(deleted, Deleted{filename: file})
+			deleted = append(deleted, Deleted{Path{}.New(
+				file,
+				false, // MAYBE: implement
+			)})
 		}
 	}
 
@@ -280,7 +337,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 				uploadMessage = fmt.Sprintf("uploading %d file(s)", len(updated))
 				if verbosity == 3 {
 					existingStr := make([]string, 0, len(updated))
-					for _, u := range updated { existingStr = append(existingStr, u.filename.Real()) }
+					for _, u := range updated { existingStr = append(existingStr, u.path.original.Real()) }
 					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(existingStr, " "))
 				}
 			}
@@ -313,20 +370,20 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 		manager.fallbackFiles(files)
 	}
 }
-func (manager RemoteManager) message(filenames []Filename, sign string, action string) string {
+func (manager RemoteManager) message(paths []Path, sign string, action string) string {
 	if manager.verbosity == 0 { return "" }
-	if manager.verbosity == 1 { return fmt.Sprintf("%s%d", sign, len(filenames)) }
+	if manager.verbosity == 1 { return fmt.Sprintf("%s%d", sign, len(paths)) }
 
-	message := fmt.Sprintf("%s %d file", action, len(filenames))
-	if len(filenames) > 1 { message += "s" }
+	message := fmt.Sprintf("%s %d file", action, len(paths))
+	if len(paths) > 1 { message += "s" }
 	if manager.verbosity == 2 {
 		return message
 	} else {
-		filenamesStrings := make([]string, 0, len(filenames))
-		for _, filename := range filenames {
-			filenamesStrings = append(filenamesStrings, filename.Real())
+		pathsStrings := make([]string, 0, len(paths))
+		for _, path := range paths {
+			pathsStrings = append(pathsStrings, path.original.Real()) // TODO: do not access private
 		}
-		return message + ": " + strings.Join(filenamesStrings, " ")
+		return message + ": " + strings.Join(pathsStrings, " ")
 	}
 }
 
@@ -448,38 +505,38 @@ func (client *SSHMirror) SetLogger(logger Logger) {
 func (client *SSHMirror) Init(batchSize FileSize) error {
 	// MAYBE: progress indicator
 
-	synced := make(map[Filename]bool)
+	synced := DummyFS{}
 
-	modified := func(Filename) {} // MAYBE: use `SwitchChannelFilenames`
+	modified := func(Path) {} // MAYBE: use `SwitchChannelPaths`
 
 	go func() {
 		for modification := range client.watcher.Modifications() {
 			// PRIORITY: handle directories
 			// MAYBE: something smarter
-			for _, filename := range modification.AffectedFiles() {
-				modified(filename)
-				delete(synced, filename)
+			for _, path := range modification.AffectedPaths() {
+				modified(path)
+				synced.Delete(path)
 			}
 		}
 		panic("modifications channel closed") // THINK: some exit point
 	}()
 
-	upload := func(batch map[Filename]bool) {
-		modified = func(filename Filename) { delete(batch, filename) }
-		defer func() { modified = func(Filename) {} }()
+	upload := func(batch DummyFS) {
+		modified = func(path Path) { batch.Delete(path) }
+		defer func() { modified = func(Path) {} }()
 
-		updated := make([]Updated, 0, len(batch))
-		for filename := range batch { updated = append(updated, Updated{filename: filename}) }
+		updated := make([]Updated, 0, len(batch.files))
+		for _, filePath := range batch.files { updated = append(updated, Updated{filePath}) }
 
 		if err := client.remote.Update(updated).Result(); err == nil {
-			for filename := range batch { synced[filename] = true }
+			for _, filePath := range batch.files { synced.AddFile(filePath.original) }
 		} else {
 			client.logger.Error(err.Error())
 		}
 	}
 
 	for {
-		batch := make(map[Filename]bool)
+		batch := DummyFS{}
 		var curBatchSize FileSize
 		errBatch := filepath.Walk( // MAYBE: optimize. Do not walk over `synced`
 			client.root,
@@ -490,8 +547,8 @@ func (client *SSHMirror) Init(batchSize FileSize) error {
 				}
 				if info.IsDir() { return nil }
 				filename := Filename(path)
-				if synced[filename] { return nil }
-				batch[filename] = true
+				if synced.Has(Path{}.New(filename, false)) { return nil } // MAYBE: optimize
+				batch.AddFile(filename)
 				curBatchSize = curBatchSize.Add(FileSize{bytes: uint64(info.Size())})
 				if curBatchSize.IsLess(batchSize) {
 					return nil
@@ -516,7 +573,7 @@ func (client *SSHMirror) Run() {
 	var syncing sync.Mutex
 	var cancelFirst *context.CancelFunc
 	var cancelLast *context.CancelFunc
-	modifiedFiles := SwitchChannelFilenames{}.New()
+	modifiedPaths := SwitchChannelPaths{}.New()
 
 	exit := make(chan os.Signal)
 	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
@@ -551,7 +608,7 @@ func (client *SSHMirror) Run() {
 			return
 		}
 
-		client.sync(&queue, modifiedFiles)
+		client.sync(&queue, modifiedPaths)
 
 		if queue.IsEmpty() { client.onReady() }
 	}
@@ -562,7 +619,7 @@ func (client *SSHMirror) Run() {
 		if cancelFirst == nil { cancelFirst = cancellableTimer(5 * time.Second, doSync) }
 		if cancelLast != nil { (*cancelLast)() }
 		cancelLast = cancellableTimer(500 * time.Millisecond, doSync)
-		for _, filename := range modification.AffectedFiles() { modifiedFiles.Put(filename) }
+		for _, filename := range modification.AffectedPaths() { modifiedPaths.Put(filename) }
 	}
 
 	//select {
@@ -581,7 +638,7 @@ func (client *SSHMirror) Run() {
 		}
 	}
 }
-func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchChannelFilenames) { // THINK: limit of tries
+func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedPaths *SwitchChannelPaths) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
 
 	syncInPlace := func() {
@@ -616,11 +673,11 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchCh
 				goroutineStarted.Unlock()
 				for {
 					select {
-						case modifiedFile, ok := <-modifiedFiles.Get():
-							if !ok { panic("modifiedFiles channel closed") }
+						case modifiedPath, ok := <-modifiedPaths.Get():
+							if !ok { panic("modifiedPaths channel closed") }
 							for _, _updated := range updated { // MAYBE: map
-								if modifiedFile == _updated.filename {
-									client.logger.Debug("cancelling upload. Modified file", modifiedFile)
+								if modifiedPath.Relates(_updated.path) {
+									client.logger.Debug("cancelling upload. Modified path", modifiedPath)
 									command.Cancel()
 								}
 							}
@@ -630,9 +687,9 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchCh
 				}
 			}()
 			goroutineStarted.Wait()
-			modifiedFiles.On()
+			modifiedPaths.On()
 			err := command.Result()
-			modifiedFiles.Off()
+			modifiedPaths.Off()
 			close(commandDone)
 			if err == nil {
 				client.logger.Debug("success")

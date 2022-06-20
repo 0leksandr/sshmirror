@@ -96,14 +96,15 @@ type TestModificationCase struct { // MAYBE: rename
 	expectedQueue         *ModificationsQueue
 }
 
-type TestModificationCasesGroup []TestModificationCase
-
 var fileIndex = 0
-func generateFilename(inTarget bool) Filename {
+func generatePath(inTarget bool) Path {
 	dir := "."
 	if inTarget { dir += "/target" }
 	fileIndex++
-	return Filename(fmt.Sprintf("%s/file-%d", dir, fileIndex))
+	return Path{}.New(
+		Filename(fmt.Sprintf("%s/file-%d", dir, fileIndex)),
+		false,
+	)
 
 	//var symbols []string
 	//for _, symbol := range []rune("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗") {
@@ -134,7 +135,7 @@ func generateFilename(inTarget bool) Filename {
 	//		"target",
 	//	},
 	//) {
-	//	return generateFilename(inTarget)
+	//	return generatePath(inTarget)
 	//}
 	//return Filename(dir + filename)
 }
@@ -155,12 +156,12 @@ func remove(filename Filename) string {
 
 func basicModificationCases() []TestModificationCase {
 	return []TestModificationCase{
-		(func(a Filename) TestModificationCase {
+		(func(a Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: []Filename{},
 					after: TestModificationsList{
-						TestSimpleModification{create(a)},
+						TestSimpleModification{create(a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -172,14 +173,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b},
+					before: []Filename{a.original, b.original},
 					after: TestModificationsList{
-						TestSimpleModification{remove(a)},
-						TestSimpleModification{move(b, a)},
+						TestSimpleModification{remove(a.original)},
+						TestSimpleModification{move(b.original, a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -195,17 +196,17 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b, cExt Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b, cExt Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{b},
+					before: []Filename{b.original},
 					after: TestModificationsList{
-						TestSimpleModification{write(a)},
-						TestSimpleModification{move(a, b)},
+						TestSimpleModification{write(a.original)},
+						TestSimpleModification{move(a.original, b.original)},
 						TestVariantsModification{[]string{
-							remove(b),
-							move(b, cExt),
+							remove(b.original),
+							move(b.original, cExt.original),
 						}},
 						TestSimpleModification{MovementCleanup},
 					},
@@ -222,14 +223,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(false)),
-		(func(a, b, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(false)),
+		(func(a, b, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{move(b, c)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{move(b.original, c.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -246,14 +247,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b},
+					before: []Filename{a.original, b.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(a)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -269,15 +270,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b},
+					before: []Filename{a.original, b.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(b)},
-						TestSimpleModification{write(a)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(b.original)},
+						TestSimpleModification{write(a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -296,15 +297,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b, c},
+					before: []Filename{a.original, b.original, c.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(b)},
-						TestSimpleModification{move(c, a)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(b.original)},
+						TestSimpleModification{move(c.original, a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -324,15 +325,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(true)),
+		(func(a, b, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b, c},
+					before: []Filename{a.original, b.original, c.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, c)},
-						TestSimpleModification{move(b, a)},
-						TestSimpleModification{move(c, b)},
+						TestSimpleModification{move(a.original, c.original)},
+						TestSimpleModification{move(b.original, a.original)},
+						TestSimpleModification{move(c.original, b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -348,14 +349,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b, cExt Filename) TestModificationCase { // group begin: tricky Watcher cases
+		})(generatePath(true), generatePath(true), generatePath(true)),
+		(func(a, b, cExt Path) TestModificationCase { // group begin: tricky Watcher cases
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, cExt)},
-						TestSimpleModification{create(b)},
+						TestSimpleModification{move(a.original, cExt.original)},
+						TestSimpleModification{create(b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -371,14 +372,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(false)),
-		(func(a, bExt, cExt Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(false)),
+		(func(a, bExt, cExt Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, cExt},
+					before: []Filename{a.original, cExt.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, bExt)},
-						TestSimpleModification{move(cExt, a)},
+						TestSimpleModification{move(a.original, bExt.original)},
+						TestSimpleModification{move(cExt.original, a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -395,14 +396,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(false), generateFilename(false)),
-		(func(a, bExt, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(false), generatePath(false)),
+		(func(a, bExt, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, bExt)},
-						TestSimpleModification{move(bExt, c)},
+						TestSimpleModification{move(a.original, bExt.original)},
+						TestSimpleModification{move(bExt.original, c.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -418,15 +419,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(false), generateFilename(true)), // group end
-		(func(a, bExt, cExt Filename) TestModificationCase {
+		})(generatePath(true), generatePath(false), generatePath(true)), // group end
+		(func(a, bExt, cExt Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, bExt, cExt}, // MAYBE: find a normal way to test, and remove `a` (or make it optional)
+					before: []Filename{a.original, bExt.original, cExt.original}, // MAYBE: find a normal way to test, and remove `a` (or make it optional)
 					after: TestModificationsList{
-						TestSimpleModification{move(bExt, a)},
-						TestOptionalModification{write(a)},
-						TestSimpleModification{move(a, cExt)},
+						TestSimpleModification{move(bExt.original, a.original)},
+						TestOptionalModification{write(a.original)},
+						TestSimpleModification{move(a.original, cExt.original)},
 						TestSimpleModification{MovementCleanup},
 					},
 				},
@@ -441,14 +442,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(false), generateFilename(false)),
-		(func(a, b, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(false), generatePath(false)),
+		(func(a, b, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b},
+					before: []Filename{a.original, b.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(b, c)},
-						TestSimpleModification{move(a, b)},
+						TestSimpleModification{move(b.original, c.original)},
+						TestSimpleModification{move(a.original, b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -462,15 +463,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(true)),
+		(func(a, b, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b},
+					before: []Filename{a.original, b.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(b, c)},
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(c)},
+						TestSimpleModification{move(b.original, c.original)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(c.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -490,15 +491,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(true)),
+		(func(a, b, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b},
+					before: []Filename{a.original, b.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(b, c)},
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(b)},
+						TestSimpleModification{move(b.original, c.original)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -519,15 +520,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(true)),
+		(func(a, b, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, b, c},
+					before: []Filename{a.original, b.original, c.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{move(b, c)},
-						TestSimpleModification{remove(c)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{move(b.original, c.original)},
+						TestSimpleModification{remove(c.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -547,14 +548,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{move(b, a)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{move(b.original, a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -570,14 +571,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, bExt Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, bExt Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, bExt)},
-						TestSimpleModification{move(bExt, a)},
+						TestSimpleModification{move(a.original, bExt.original)},
+						TestSimpleModification{move(bExt.original, a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -594,14 +595,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(false)),
-		(func(a, bExt, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(false)),
+		(func(a, bExt, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, c},
+					before: []Filename{a.original, c.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, bExt)},
-						TestSimpleModification{move(bExt, c)},
+						TestSimpleModification{move(a.original, bExt.original)},
+						TestSimpleModification{move(bExt.original, c.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -617,15 +618,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(false), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase { // group begin
+		})(generatePath(true), generatePath(false), generatePath(true)),
+		(func(a, b Path) TestModificationCase { // group begin
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(a)}, // MAYBE: optional. Split unit and integration tests data
-						TestSimpleModification{write(b)}, // MAYBE: optional. Split unit and integration tests data
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(a.original)}, // MAYBE: optional. Split unit and integration tests data
+						TestSimpleModification{write(b.original)}, // MAYBE: optional. Split unit and integration tests data
 					},
 				},
 				expectedModifications: []Modification{
@@ -644,14 +645,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(a)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -667,14 +668,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(b)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -692,15 +693,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)), // group end
-		(func(a, b Filename) TestModificationCase { // group begin
+		})(generatePath(true), generatePath(true)), // group end
+		(func(a, b Path) TestModificationCase { // group begin
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(a)}, // MAYBE: optional
-						TestSimpleModification{remove(b)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(a.original)}, // MAYBE: optional
+						TestSimpleModification{remove(b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -720,14 +721,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{remove(b)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{remove(b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -744,15 +745,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)), // group end
-		(func(a, b, c Filename) TestModificationCase { // group begin
+		})(generatePath(true), generatePath(true)), // group end
+		(func(a, b, c Path) TestModificationCase { // group begin
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, c},
+					before: []Filename{a.original, c.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(a)}, // MAYBE: optional
-						TestSimpleModification{move(c, b)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(a.original)}, // MAYBE: optional
+						TestSimpleModification{move(c.original, b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -772,14 +773,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)),
-		(func(a, b, c Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true), generatePath(true)),
+		(func(a, b, c Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a, c},
+					before: []Filename{a.original, c.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{move(c, b)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{move(c.original, b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -796,17 +797,17 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true), generateFilename(true)), // group end
-		(func(a, b Filename) TestModificationCase { // group begin
+		})(generatePath(true), generatePath(true), generatePath(true)), // group end
+		(func(a, b Path) TestModificationCase { // group begin
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{remove(a)}, // MAYBE: optional
-						TestSimpleModification{write(a)}, // MAYBE: optional
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(a)}, // MAYBE: optional
-						TestSimpleModification{remove(a)}, // MAYBE: optional
+						TestSimpleModification{remove(a.original)}, // MAYBE: optional
+						TestSimpleModification{write(a.original)}, // MAYBE: optional
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(a.original)}, // MAYBE: optional
+						TestSimpleModification{remove(a.original)}, // MAYBE: optional
 					},
 				},
 				expectedModifications: []Modification{
@@ -829,14 +830,14 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
 					before: []Filename{},
 					after: TestModificationsList{
-						TestSimpleModification{write(a)},
-						TestSimpleModification{move(a, b)},
+						TestSimpleModification{write(a.original)},
+						TestSimpleModification{move(a.original, b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -852,15 +853,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{remove(a)},
-						TestSimpleModification{write(a)},
-						TestSimpleModification{move(a, b)},
+						TestSimpleModification{remove(a.original)},
+						TestSimpleModification{write(a.original)},
+						TestSimpleModification{move(a.original, b.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -880,15 +881,15 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)),
-		(func(a, b Filename) TestModificationCase {
+		})(generatePath(true), generatePath(true)),
+		(func(a, b Path) TestModificationCase {
 			return TestModificationCase{
 				chain: TestModificationChain{
-					before: []Filename{a},
+					before: []Filename{a.original},
 					after: TestModificationsList{
-						TestSimpleModification{move(a, b)},
-						TestSimpleModification{write(a)},
-						TestSimpleModification{remove(a)},
+						TestSimpleModification{move(a.original, b.original)},
+						TestSimpleModification{write(a.original)},
+						TestSimpleModification{remove(a.original)},
 					},
 				},
 				expectedModifications: []Modification{
@@ -903,6 +904,6 @@ func basicModificationCases() []TestModificationCase {
 					},
 				},
 			}
-		})(generateFilename(true), generateFilename(true)), // group end
+		})(generatePath(true), generatePath(true)), // group end
 	}
 }

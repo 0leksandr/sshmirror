@@ -72,7 +72,7 @@ func (client *sshClient) Close() error {
 func (client *sshClient) Update(updated []Updated) CancellableContext {
 	escapedFilenames := make([]string, 0, len(updated))
 	for _, modification := range updated {
-		escapedFilenames = append(escapedFilenames, modification.filename.Escaped())
+		escapedFilenames = append(escapedFilenames, modification.path.original.Escaped())
 	}
 
 	command := client.startCommand(
