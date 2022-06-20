@@ -19,6 +19,7 @@ import (
 
 // TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
 // TODO: test tabs, zero-symbols and others in filenames
+// TODO: test files and directories with same name
 // MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
 // MAYBE: test tricky filenames: `--`, `.`, `..`, `*`, `:`, `\r`
 // MAYBE: test ignored

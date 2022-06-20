@@ -71,7 +71,7 @@ func (client *sshClient) Close() error {
 func (client *sshClient) Update(updated []Updated) CancellableContext {
 	escapedFilenames := make([]string, 0, len(updated))
 	for _, modification := range updated {
-		escapedFilenames = append(escapedFilenames, modification.filename.Escaped())
+		escapedFilenames = append(escapedFilenames, modification.path.original.Escaped())
 	}
 
 	command := client.startCommand(
@@ -93,7 +93,7 @@ func (client *sshClient) Update(updated []Updated) CancellableContext {
 func (client *sshClient) Delete(deleted []Deleted) error {
 	escapedFilenames := make([]string, 0, len(deleted))
 	for _, modification := range deleted {
-		escapedFilenames = append(escapedFilenames, modification.filename.Escaped())
+		escapedFilenames = append(escapedFilenames, modification.path.original.Escaped())
 	}
 
 	if client.runRemoteCommand(fmt.Sprintf(
@@ -110,8 +110,8 @@ func (client *sshClient) Move(moved []Moved) error {
 	for _, modification := range moved {
 		commands = append(commands, fmt.Sprintf(
 			"mv -- %s %s",
-			modification.from.Escaped(),
-			modification.to.Escaped(),
+			modification.from.original.Escaped(),
+			modification.to.original.Escaped(),
 		))
 	}
 

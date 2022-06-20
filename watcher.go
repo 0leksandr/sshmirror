@@ -39,28 +39,34 @@ func (FsnotifyWatcher) New(root string, exclude string) Watcher {
 	var events <-chan fsnotify.Event
 	events, watcher.stopWatching = FsnotifyWatcher{}.watchDirRecursive(root, ignored)
 
+	getPath := func(event fsnotify.Event) Path {
+		return Path{}.New(
+			Filename(event.Name[len(root)+1:]),
+			false, // TODO: implement
+		)
+	}
+
 	var processEvent func(event fsnotify.Event)
 	processEvent = func(event fsnotify.Event) {
 		if event.Op == 0 { return } // MAYBE: report? This is weird
 		if event.Op == fsnotify.Chmod { return }
-		filenameString := event.Name[len(root)+1:]
-		if ignored != nil && ignored.MatchString(filenameString) { return }
-		filename := Filename(filenameString)
+		path := getPath(event)
+		if ignored != nil && ignored.MatchString(path.original.Real()) { return }
 
 		switch event.Op {
 			case fsnotify.Create, fsnotify.Write:
-				watcher.put(Updated{filename: filename})
+				watcher.put(Updated{path})
 			case fsnotify.Remove:
-				watcher.put(Deleted{filename: filename})
+				watcher.put(Deleted{path})
 			case fsnotify.Rename:
-				putDefault := func() { watcher.put(Deleted{filename: filename}) }
+				putDefault := func() { watcher.put(Deleted{path}) }
 				select {
 					case nextEvent, ok := <-events:
 						if ok {
 							if nextEvent.Op == fsnotify.Create { // MAYBE: check contents (checksums, modification times)
 								watcher.put(Moved{
-									from: filename,
-									to:   Filename(nextEvent.Name[len(root)+1:]),
+									from: path,
+									to:   getPath(nextEvent),
 								})
 							} else {
 								putDefault()
@@ -172,6 +178,8 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	const MovedFromStr  = "MOVED_FROM"
 	const MovedToStr    = "MOVED_TO"
 
+	const IsDir = "ISDIR"
+
 	type EventType uint8
 	const (
 		CloseWriteCode EventType = 1 << iota
@@ -205,7 +213,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 
 	type Event struct {
 		eventType EventType
-		filename  string
+		path      Path
 	}
 	events := make(chan Event) // MAYBE: reserve size
 	watcher.onClose = func() error {
@@ -246,10 +254,11 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 			if line == "" { break }
 			watcher.logger.Debug("inotify.line", line)
 			parts := reg.FindStringSubmatch(line)
-			filename := parts[1]
+			path := Path{}.New(Filename(parts[1]), false)
 			eventsStr := parts[2]
-			eventType, errReadEvent := func() (EventType, error) {
-				for _, eventType := range strings.Split(eventsStr, ",") {
+			eventTypes := strings.Split(eventsStr, ",")
+			knownType, errReadEvent := func() (EventType, error) {
+				for _, eventType := range eventTypes {
 					for _, knownType := range knownTypes {
 						if eventType == knownType.str { return knownType.code, nil }
 					}
@@ -257,9 +266,15 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 				return 0, errors.New("unknown event: " + eventsStr)
 			}()
 			if errReadEvent == nil {
+				for _, eventType := range eventTypes {
+					if eventType == IsDir {
+						path.isDir = true
+						break
+					}
+				}
 				events <- Event{
-					eventType: eventType,
-					filename:  filename,
+					eventType: knownType,
+					path:      path,
 				}
 			} else {
 				watcher.logger.Error(errReadEvent.Error())
@@ -273,19 +288,20 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	var processEvent func(Event)
 	processEvent = func(event Event) {
 		watcher.logger.Debug("event", event)
-		filename := Filename(event.filename)
+		path := event.path
 		switch event.eventType {
-			case CloseWriteCode: put(Updated{filename})
-			case DeleteCode: put(Deleted{filename})
+			case CloseWriteCode: put(Updated{path})
+			case DeleteCode: put(Deleted{path})
 			case MovedFromCode:
-				putDefault := func() { put(Deleted{filename}) }
+				putDefault := func() { put(Deleted{path}) }
 				select {
 					case nextEvent, ok := <- events:
 						if ok {
 							if nextEvent.eventType == MovedToCode {
+								if path.isDir != nextEvent.path.isDir { panic("inconsistent move") } // MAYBE: some fallback
 								put(Moved{
-									from: filename,
-									to:   Filename(nextEvent.filename),
+									from: path,
+									to:   nextEvent.path,
 								})
 							} else {
 								putDefault()
@@ -298,7 +314,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 						putDefault()
 					// MAYBE: listen for exit
 				}
-			case MovedToCode: put(Updated{filename})
+			case MovedToCode: put(Updated{path})
 		}
 	}
 	go func() { // events to modifications

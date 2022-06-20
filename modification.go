@@ -7,40 +7,56 @@ import (
 
 type Modification interface {
 	Join(queue *ModificationsQueue) error
-	AffectedFiles() []Filename
+	AffectedPaths() []Path
 }
 // problem with created+updated: impossible to determine which one of the two is a moved file. I.e. a file was moved
 // to a new location. Is it created or updated?
 // TODO: return `Created`, and improve created + instantly deleted cases
 
 type Updated struct { // any file, that must be uploaded // MAYBE: Written
-	filename Filename
+	path Path
 }
 type Deleted struct { // existing file, that was deleted
-	filename Filename
+	path Path
 }
 type Moved struct { // existing file, that was moved to a new location
-	from Filename
-	to   Filename
+	from Path
+	to   Path
 }
 func (updated Updated) Join(queue *ModificationsQueue) error {
 	addToQueue := true
 	for _, previouslyUpdated := range queue.updated {
-		if previouslyUpdated.filename == updated.filename {
+		if previouslyUpdated.path.Equals(updated.path) {
 			addToQueue = false
+		} else if previouslyUpdated.path.Relates(updated.path) {
+			inconsistentModifications()
 		}
+
+		//if previouslyUpdated.path.IsParentOf(updated.path) {
+		//	addToQueue = false
+		//} else if updated.path.IsParentOf(previouslyUpdated.path) {
+		//	queue.removeUpdated(i) // MAYBE: just replace old one with a new one
+		//}
 	}
 	for i, moved := range queue.moved {
-		if moved.to == updated.filename {
+		if moved.to.Equals(updated.path) {
 			queue.removeMoved(i)
 			if !queue.HasModifications(moved.from) {
-				if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
+				if err := queue.Add(Deleted{moved.from}); err != nil { return err }
 			}
+		} else if moved.to.IsParentOf(updated.path) {
+			// ignore
+		} else if updated.path.IsParentOf(moved.to) {
+			inconsistentModifications()
 		}
 	}
 	for i, deleted := range queue.deleted {
-		if deleted.filename == updated.filename {
+		if deleted.path.Equals(updated.path) {
 			queue.removeDeleted(i)
+		} else if deleted.path.IsParentOf(updated.path) {
+			// ignore
+		} else if updated.path.IsParentOf(deleted.path) {
+			inconsistentModifications()
 		}
 	}
 	if addToQueue { queue.updated = append(queue.updated, updated) }
@@ -48,61 +64,75 @@ func (updated Updated) Join(queue *ModificationsQueue) error {
 }
 func (deleted Deleted) Join(queue *ModificationsQueue) error {
 	for i, updated := range queue.updated {
-		if updated.filename == deleted.filename {
-			queue.removeUpdated(i)
+		if deleted.path.IsParentOf(updated.path) {
+			queue.removeUpdated(i) // PRIORITY: `i--` or something else appropriate. To this, and ALL other relevant places
+		} else if updated.path.IsParentOf(deleted.path) {
+			inconsistentModifications()
 		}
 	}
 	for i, moved := range queue.moved {
-		if moved.to == deleted.filename {
+		if deleted.path.IsParentOf(moved.to) {
 			queue.removeMoved(i)
 			if !queue.HasModifications(moved.from) {
-				if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
+				if err := queue.Add(Deleted{moved.from}); err != nil { return err }
 			}
+		} else if moved.to.IsParentOf(deleted.path) {
+			// ignore
 		}
 	}
-	for _, previouslyDeleted := range queue.deleted {
-		if previouslyDeleted.filename == deleted.filename {
-			return errors.New("deleted, then deleted")
+	for i, previouslyDeleted := range queue.deleted {
+		if previouslyDeleted.path.IsParentOf(deleted.path) {
+			return errors.New("trying to delete what is already deleted")
+		} else if deleted.path.IsParentOf(previouslyDeleted.path) {
+			queue.removeDeleted(i)
 		}
 	}
 	queue.deleted = append(queue.deleted, deleted)
 	return nil
 }
 func (moved Moved) Join(queue *ModificationsQueue) error {
-	if moved.from == moved.to { return errors.New("moving to same location") }
+	if moved.from.Relates(moved.to) { return errors.New("impossible move") } // TODO: try to reproduce
 
 	addToQueue := true
 	for i, deleted := range queue.deleted { // before the next block, because else will be overwritten
-		if deleted.filename == moved.from {
-			return errors.New("deleted, then moved from")
+		if deleted.path.IsParentOf(moved.from) {
+			return errors.New("trying to move that was deleted")
+		} else if moved.from.IsParentOf(deleted.path) {
+			// PRIORITY: shift deleted
 		}
 
-		if deleted.filename == moved.to {
+		if moved.to.IsParentOf(deleted.path) {
 			queue.removeDeleted(i)
+		} else if deleted.path.IsParentOf(moved.to) {
+			// PRIORITY: reorder operations?
 		}
 	}
 
 	for i, updated := range queue.updated {
-		if updated.filename == moved.to {
+		if moved.to.IsParentOf(updated.path) {
 			queue.removeUpdated(i)
+		} else if updated.path.IsParentOf(moved.to) {
+			inconsistentModifications()
 		}
 	}
 	for _, updated := range queue.updated {
-		if updated.filename == moved.from {
-			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
-			if err := queue.Add(Updated{filename: moved.to}); err != nil { return err }
+		if updated.path.Equals(moved.from) {
+			if err := queue.Add(Deleted{moved.from}); err != nil { return err }
+			if err := queue.Add(Updated{moved.to}); err != nil { return err }
 			addToQueue = false
+		} else if updated.path.IsParentOf(moved.from) {
+			inconsistentModifications()
+		} else if moved.from.IsParentOf(updated.path) {
+			// PRIORITY: shift updated
 		}
 	}
 
 	for i, previouslyMoved := range queue.moved {
-		if previouslyMoved.from == moved.from {
+		if previouslyMoved.from.IsParentOf(moved.from) {
 			return errors.New("moved from, then moved from")
 		}
-		if previouslyMoved.from == moved.to {
-			// TODO: think about
-		}
-		if previouslyMoved.to == moved.from {
+
+		if previouslyMoved.to.Equals(moved.from) {
 			//triangularMove := false // TODO: uncomment and test modifying files within triangle
 			//for i2, previouslyMoved2 := range queue.moved {
 			//	if previouslyMoved2.from == moved.to {
@@ -111,36 +141,36 @@ func (moved Moved) Join(queue *ModificationsQueue) error {
 			//}
 			//if !triangularMove {
 			//}
-			if previouslyMoved.from == moved.to {
+			if previouslyMoved.from.Equals(moved.to) {
 				queue.removeMoved(i)
 			} else {
 				queue.moved[i].to = moved.to
 			}
-			if err := queue.Add(Deleted{filename: moved.from}); err != nil { return err }
+			if err := queue.Add(Deleted{moved.from}); err != nil { return err }
 			addToQueue = false
 		}
-		if previouslyMoved.to == moved.to {
+		if previouslyMoved.to.Equals(moved.to) {
 			queue.removeMoved(i)
 			if !queue.HasModifications(previouslyMoved.from) {
-				if err := queue.Add(Deleted{filename: previouslyMoved.from}); err != nil { return err }
+				if err := queue.Add(Deleted{previouslyMoved.from}); err != nil { return err }
 			}
 		}
 	}
 	if addToQueue { queue.moved = append(queue.moved, moved) }
 	return nil
 }
-func (updated Updated) AffectedFiles() []Filename {
-	return []Filename{updated.filename}
+func (updated Updated) AffectedPaths() []Path {
+	return []Path{updated.path}
 }
-func (deleted Deleted) AffectedFiles() []Filename {
-	return []Filename{deleted.filename}
+func (deleted Deleted) AffectedPaths() []Path {
+	return []Path{deleted.path}
 }
-func (moved Moved) AffectedFiles() []Filename {
-	return []Filename{moved.from, moved.to}
+func (moved Moved) AffectedPaths() []Path {
+	return []Path{moved.from, moved.to}
 }
 
 type ModificationsQueue struct {
-	// MAYBE: map filename: modification. For moved, key is moved.to
+	// MAYBE: map path: modification. For moved, key is moved.to
 	updated []Updated
 	deleted []Deleted
 	moved   []Moved
@@ -155,15 +185,16 @@ func (queue *ModificationsQueue) AtomicAdd(modification Modification) error {
 func (queue *ModificationsQueue) Add(modification Modification) error {
 	return modification.Join(queue)
 }
-func (queue *ModificationsQueue) HasModifications(filename Filename) bool {
+func (queue *ModificationsQueue) HasModifications(path Path) bool {
+	// PRIORITY: check tree all the way down
 	for _, updated := range queue.updated {
-		if updated.filename == filename { return true }
+		if updated.path.Relates(path) { return true }
 	}
 	for _, deleted := range queue.deleted {
-		if deleted.filename == filename { return true }
+		if deleted.path.Relates(path) { return true }
 	}
 	for _, moved := range queue.moved {
-		if moved.to == filename { return true }
+		if moved.to.Relates(path){ return true }
 	}
 	return false
 }
@@ -202,13 +233,13 @@ func (queue *ModificationsQueue) Optimize() error {
 				movedI := queue.moved[i]
 				for j := i+1; j < len(queue.moved); j++ {
 					movedJ := queue.moved[j]
-					if movedI.from == movedJ.to && movedI.to == movedJ.from {
+					if movedI.from.Equals(movedJ.to) && movedI.to.Equals(movedJ.from) {
 						queue.removeMoved(j)
 						queue.removeMoved(i)
 						// THINK: something smarter
 						var err2 error
-						for _, filename := range [2]Filename{movedI.from , movedJ.from} {
-							if err3 := queue.Add(Updated{filename: filename}); err3 != nil { err2 = err3 }
+						for _, path := range [2]Path{movedI.from , movedJ.from} {
+							if err3 := queue.Add(Updated{path}); err3 != nil { err2 = err3 }
 						}
 						return true, err2
 					}
@@ -236,9 +267,9 @@ func (queue *ModificationsQueue) Optimize() error {
 	//	if empty {
 	//		queue.removeMoved(i)
 	//		i--
-	//		if err2 := queue.Add(Updated{filename: moved.to}); err2 != nil { return err2 }
+	//		if err2 := queue.Add(Updated{path: moved.to}); err2 != nil { return err2 }
 	//		if !queue.HasModifications(moved.from) {
-	//			if err2 := queue.Add(Deleted{filename: moved.from}); err2 != nil { return err2 }
+	//			if err2 := queue.Add(Deleted{path: moved.from}); err2 != nil { return err2 }
 	//		}
 	//	}
 	//}
@@ -254,13 +285,13 @@ func (queue *ModificationsQueue) Equals(other *ModificationsQueue) bool { // MAY
 	}
 
 	for i, updated := range queue.updated {
-		if updated != other.updated[i] { return false }
+		if !updated.path.Equals(other.updated[i].path) { return false }
 	}
 	for i, deleted := range queue.deleted {
-		if deleted != other.deleted[i] { return false }
+		if !deleted.path.Equals(other.deleted[i].path) { return false }
 	}
 	for i, moved := range queue.moved {
-		if moved != other.moved[i] { return false }
+		if !moved.from.Equals(other.moved[i].from) || !moved.to.Equals(other.moved[i].to) { return false }
 	}
 
 	return true
@@ -323,4 +354,8 @@ func (queue *TransactionalQueue) queues() []*ModificationsQueue {
 	queues := []*ModificationsQueue{&queue.ModificationsQueue}
 	if queue.backup != nil { queues = append(queues, queue.backup) }
 	return queues
+}
+
+func inconsistentModifications() { // THINK: resolve
+	panic("inconsistent modifications")
 }
