@@ -216,7 +216,7 @@ func (manager RemoteManager) Update(updated []Updated) CancellableContext {
 func (manager RemoteManager) InPlace(modifications []InPlaceModification) error {
 	movedFilenames := make([]Filename, 0, len(modifications))
 	for _, modification := range modifications {
-		movedFilenames = append(movedFilenames, modification.ChangedFilename())
+		movedFilenames = append(movedFilenames, modification.OldFilename())
 	}
 
 	return manager.sync(
@@ -233,10 +233,10 @@ func (manager RemoteManager) SetLogger(logger Logger) {
 func (manager RemoteManager) Fallback(queue *ModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
 	for _, updated := range queue.updated { files = append(files, updated.filename) }
-	for _, deleted := range queue.deleted { files = append(files, deleted.filename) }
-	for _, moved := range queue.moved {
-		files = append(files, moved.from)
-		files = append(files, moved.to)
+	for _, inPlaceModification := range queue.inPlace {
+		for _, filename := range inPlaceModification.AffectedFiles() {
+			files = append(files, filename)
+		}
 	}
 
 	manager.fallbackFiles(files)
@@ -298,7 +298,7 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 				uploadMessage = fmt.Sprintf("deleting %d file(s)", len(deleted))
 				if verbosity == 3 {
 					deletedStr := make([]string, 0, len(deleted))
-					for _, d := range deleted { deletedStr = append(deletedStr, d.ChangedFilename().Real()) }
+					for _, d := range deleted { deletedStr = append(deletedStr, d.OldFilename().Real()) }
 					uploadMessage = fmt.Sprintf("%s: %s", uploadMessage, strings.Join(deletedStr, " "))
 				}
 			}
@@ -558,14 +558,10 @@ func (client *SSHMirror) Run() {
 
 	modificationReceived := func(modification Modification) {
 		client.logger.Debug("modification received", modification)
-		if err := queue.AtomicAdd(modification); err == nil {
-			if cancelFirst == nil { cancelFirst = cancellableTimer(5 * time.Second, doSync) }
-			if cancelLast != nil { (*cancelLast)() }
-			cancelLast = cancellableTimer(500 * time.Millisecond, doSync)
-		} else {
-			client.logger.Error(err.Error())
-			// TODO: fallback
-		}
+		queue.AtomicAdd(modification)
+		if cancelFirst == nil { cancelFirst = cancellableTimer(5 * time.Second, doSync) }
+		if cancelLast != nil { (*cancelLast)() }
+		cancelLast = cancellableTimer(500 * time.Millisecond, doSync)
 		for _, filename := range modification.AffectedFiles() { modifiedFiles.Put(filename) }
 	}
 
@@ -587,16 +583,13 @@ func (client *SSHMirror) Run() {
 }
 func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchChannelFilenames) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
-	Must(queue.Optimize()) // THINK: fallback
 
 	syncInPlace := func() {
-		for len(queue.moved) + len(queue.deleted) > 0 {
+		for len(queue.inPlace) > 0 {
 			queue.Begin()
-			inPlace := make([]InPlaceModification, 0, len(queue.moved) + len(queue.deleted))
-			for _, moved := range queue.moved { inPlace = append(inPlace, moved) }
-			for _, deleted := range queue.deleted { inPlace = append(inPlace, deleted) }
-			queue.moved = []Moved{}
-			queue.deleted = []Deleted{}
+			inPlace := make([]InPlaceModification, len(queue.inPlace))
+			copy(inPlace, queue.inPlace)
+			queue.inPlace = []InPlaceModification{}
 			client.logger.Debug("inPlace", inPlace)
 			if err := client.remote.InPlace(inPlace); err == nil {
 				client.logger.Debug("success")
@@ -611,7 +604,8 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedFiles *SwitchCh
 	syncUpdated := func() {
 		for len(queue.updated) > 0 {
 			queue.Begin()
-			updated := queue.updated
+			updated := make([]Updated, len(queue.updated))
+			copy(updated, queue.updated)
 			queue.updated = []Updated{}
 			client.logger.Debug("updated", updated)
 			command := client.remote.Update(updated)

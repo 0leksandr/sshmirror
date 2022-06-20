@@ -5,13 +5,12 @@ import (
 	"testing"
 )
 
-func TestModificationsQueue_Optimize(t *testing.T) {
+func TestModificationsQueue_Add(t *testing.T) {
 	for i, testCase := range basicModificationCases() {
 		queue := ModificationsQueue{}
 		for _, modification := range testCase.expectedModifications {
-			Must(queue.Add(modification))
+			queue.Add(modification)
 		}
-		Must(queue.Optimize())
 		my.Assert(
 			t,
 			queue.Equals(testCase.expectedQueue),

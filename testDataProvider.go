@@ -187,8 +187,11 @@ func basicModificationCases() []TestModificationCase {
 					Moved{b, a},
 				},
 				expectedQueue: &ModificationsQueue{
-					moved: []Moved{
-						{b, a},
+					inPlace: []InPlaceModification{
+						//Moved{b, a},
+
+						Deleted{a},
+						Moved{b, a},
 					},
 				},
 			}
@@ -213,9 +216,9 @@ func basicModificationCases() []TestModificationCase {
 					Deleted{b},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{a},
-						{b},
+					inPlace: []InPlaceModification{
+						Deleted{a},
+						Deleted{b},
 					},
 				},
 			}
@@ -234,11 +237,12 @@ func basicModificationCases() []TestModificationCase {
 					Moved{b, c},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{b},
-					},
-					moved: []Moved{
-						{a, c},
+					inPlace: []InPlaceModification{
+						//Moved{a, c},
+						//Deleted{b},
+
+						Moved{a, b},
+						Moved{b, c},
 					},
 				},
 			}
@@ -257,8 +261,8 @@ func basicModificationCases() []TestModificationCase {
 					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
-					moved: []Moved{
-						{a, b},
+					inPlace: []InPlaceModification{
+						Moved{a, b},
 					},
 					updated: []Updated{
 						{a},
@@ -282,8 +286,12 @@ func basicModificationCases() []TestModificationCase {
 					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//
+						Moved{a, b},
+					},
 					updated: []Updated{
-						{b}, // MAYBE: ignore order
+						{b},
 						{a},
 					},
 				},
@@ -305,11 +313,14 @@ func basicModificationCases() []TestModificationCase {
 					Moved{c, a},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//Moved{c, a},
+
+						Moved{a, b},
+						Moved{c, a},
+					},
 					updated: []Updated{
 						{b},
-					},
-					moved: []Moved{
-						{c, a},
 					},
 				},
 			}
@@ -330,12 +341,10 @@ func basicModificationCases() []TestModificationCase {
 					Moved{c, b},
 				},
 				expectedQueue: &ModificationsQueue{
-					updated: []Updated{
-						{a},
-						{b},
-					},
-					deleted: []Deleted{
-						{c},
+					inPlace: []InPlaceModification{
+						Moved{a, c},
+						Moved{b, a},
+						Moved{c, b},
 					},
 				},
 			}
@@ -354,11 +363,11 @@ func basicModificationCases() []TestModificationCase {
 					Updated{b},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						Deleted{a},
+					},
 					updated: []Updated{
 						{b},
-					},
-					deleted: []Deleted{
-						{a},
 					},
 				},
 			}
@@ -377,6 +386,10 @@ func basicModificationCases() []TestModificationCase {
 					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//
+						Deleted{a},
+					},
 					updated: []Updated{
 						{a},
 					},
@@ -397,11 +410,11 @@ func basicModificationCases() []TestModificationCase {
 					Updated{c},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						Deleted{a},
+					},
 					updated: []Updated{
 						{c},
-					},
-					deleted: []Deleted{
-						{a},
 					},
 				},
 			}
@@ -423,8 +436,8 @@ func basicModificationCases() []TestModificationCase {
 					Deleted{a},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{a},
+					inPlace: []InPlaceModification{
+						Deleted{a},
 					},
 				},
 			}
@@ -443,9 +456,9 @@ func basicModificationCases() []TestModificationCase {
 					Moved{a, b},
 				},
 				expectedQueue: &ModificationsQueue{
-					moved: []Moved{
-						{b, c},
-						{a, b},
+					inPlace: []InPlaceModification{
+						Moved{b, c},
+						Moved{a, b},
 					},
 				},
 			}
@@ -466,11 +479,14 @@ func basicModificationCases() []TestModificationCase {
 					Updated{c},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//Moved{a, b},
+
+						Moved{b, c},
+						Moved{a, b},
+					},
 					updated: []Updated{
 						{c},
-					},
-					moved: []Moved{
-						{a, b},
 					},
 				},
 			}
@@ -491,14 +507,15 @@ func basicModificationCases() []TestModificationCase {
 					Updated{b},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{a},
+					inPlace: []InPlaceModification{
+						//Moved{b, c},
+						//Deleted{a},
+
+						Moved{b, c},
+						Moved{a, b},
 					},
 					updated: []Updated{
 						{b},
-					},
-					moved: []Moved{
-						{b, c},
 					},
 				},
 			}
@@ -519,10 +536,14 @@ func basicModificationCases() []TestModificationCase {
 					Deleted{c},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{b},
-						{a},
-						{c},
+					inPlace: []InPlaceModification{
+						//Deleted{b},
+						//Deleted{a},
+						//Deleted{c},
+
+						Moved{a, b},
+						Moved{b, c},
+						Deleted{c},
 					},
 				},
 			}
@@ -541,8 +562,11 @@ func basicModificationCases() []TestModificationCase {
 					Moved{b, a},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{b},
+					inPlace: []InPlaceModification{
+						//Deleted{b},
+
+						Moved{a, b},
+						Moved{b, a},
 					},
 				},
 			}
@@ -561,6 +585,10 @@ func basicModificationCases() []TestModificationCase {
 					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//
+						Deleted{a},
+					},
 					updated: []Updated{
 						{a},
 					},
@@ -581,8 +609,8 @@ func basicModificationCases() []TestModificationCase {
 					Updated{c},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{a},
+					inPlace: []InPlaceModification{
+						Deleted{a},
 					},
 					updated: []Updated{
 						{c},
@@ -606,6 +634,10 @@ func basicModificationCases() []TestModificationCase {
 					Updated{b},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//
+						Moved{a, b},
+					},
 					updated: []Updated{
 						{a},
 						{b},
@@ -627,8 +659,8 @@ func basicModificationCases() []TestModificationCase {
 					Updated{a},
 				},
 				expectedQueue: &ModificationsQueue{
-					moved: []Moved{
-						{a, b},
+					inPlace: []InPlaceModification{
+						Moved{a, b},
 					},
 					updated: []Updated{
 						{a},
@@ -650,11 +682,13 @@ func basicModificationCases() []TestModificationCase {
 					Updated{b},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//Deleted{a},
+
+						Moved{a, b},
+					},
 					updated: []Updated{
 						{b},
-					},
-					deleted: []Deleted{
-						{a},
 					},
 				},
 			}
@@ -675,11 +709,14 @@ func basicModificationCases() []TestModificationCase {
 					Deleted{b},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//Deleted{b},
+
+						Moved{a, b},
+						Deleted{b},
+					},
 					updated: []Updated{
 						{a},
-					},
-					deleted: []Deleted{
-						{b},
 					},
 				},
 			}
@@ -698,9 +735,12 @@ func basicModificationCases() []TestModificationCase {
 					Deleted{b},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{a},
-						{b},
+					inPlace: []InPlaceModification{
+						//Deleted{a},
+						//Deleted{b},
+
+						Moved{a, b},
+						Deleted{b},
 					},
 				},
 			}
@@ -721,11 +761,14 @@ func basicModificationCases() []TestModificationCase {
 					Moved{c, b},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//Moved{c, b},
+
+						Moved{a, b},
+						Moved{c, b},
+					},
 					updated: []Updated{
 						{a},
-					},
-					moved: []Moved{
-						{c, b},
 					},
 				},
 			}
@@ -744,11 +787,12 @@ func basicModificationCases() []TestModificationCase {
 					Moved{c, b},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{a},
-					},
-					moved: []Moved{
-						{c, b},
+					inPlace: []InPlaceModification{
+						//Moved{c, b},
+						//Deleted{a},
+
+						Moved{a, b},
+						Moved{c, b},
 					},
 				},
 			}
@@ -773,11 +817,15 @@ func basicModificationCases() []TestModificationCase {
 					Deleted{a},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//Deleted{a},
+
+						Deleted{a},
+						Deleted{a},
+						Deleted{a},
+					},
 					updated: []Updated{
 						{b},
-					},
-					deleted: []Deleted{
-						{a},
 					},
 				},
 			}
@@ -796,11 +844,11 @@ func basicModificationCases() []TestModificationCase {
 					Moved{a, b},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						Deleted{a},
+					},
 					updated: []Updated{
 						{b},
-					},
-					deleted: []Deleted{
-						{a},
 					},
 				},
 			}
@@ -821,11 +869,14 @@ func basicModificationCases() []TestModificationCase {
 					Moved{a, b},
 				},
 				expectedQueue: &ModificationsQueue{
+					inPlace: []InPlaceModification{
+						//Deleted{a},
+
+						Deleted{a},
+						Deleted{a},
+					},
 					updated: []Updated{
 						{b},
-					},
-					deleted: []Deleted{
-						{a},
 					},
 				},
 			}
@@ -846,11 +897,9 @@ func basicModificationCases() []TestModificationCase {
 					Deleted{a},
 				},
 				expectedQueue: &ModificationsQueue{
-					deleted: []Deleted{
-						{a}, // MAYBE: fix
-					},
-					moved: []Moved{
-						{a, b},
+					inPlace: []InPlaceModification{
+						Moved{a, b},
+						Deleted{a}, // MAYBE: fix
 					},
 				},
 			}
