@@ -84,18 +84,40 @@ type InPlaceModification interface { // MAYBE: rename
 	Command(commander RemoteCommander) string
 	OldFilename() Filename
 	AffectedFiles() []Filename
+	Equals(modification InPlaceModification) bool
 }
 func (deleted Deleted) Command(commander RemoteCommander) string {
-	return commander.DeleteCommand(deleted.filename)
+	return commander.DeleteCommand(deleted.path.original)
 }
 func (deleted Deleted) OldFilename() Filename {
-	return deleted.filename
+	return deleted.path.original
+}
+func (deleted Deleted) AffectedFiles() []Filename {
+	return []Filename{deleted.path.original}
+}
+func (deleted Deleted) Equals(other InPlaceModification) bool {
+	if otherDeleted, ok := other.(Deleted); ok {
+		return deleted.path.Equals(otherDeleted.path)
+	}
+	return false
 }
 func (moved Moved) Command(commander RemoteCommander) string {
-	return commander.MoveCommand(moved.from, moved.to)
+	return commander.MoveCommand(moved.from.original, moved.to.original)
 }
 func (moved Moved) OldFilename() Filename {
-	return moved.from
+	return moved.from.original
+}
+func (moved Moved) AffectedFiles() []Filename {
+	return []Filename{
+		moved.from.original,
+		moved.to.original,
+	}
+}
+func (moved Moved) Equals(other InPlaceModification) bool {
+	if otherMoved, ok := other.(Moved); ok {
+		return moved.from.Equals(otherMoved.from) && moved.to.Equals(otherMoved.to)
+	}
+	return false
 }
 
 type ModificationsQueue struct {
@@ -138,7 +160,7 @@ func (queue *ModificationsQueue) Equals(other *ModificationsQueue) bool { // MAY
 		if !updated.path.Equals(other.updated[i].path) { return false }
 	}
 	for i, inPlace := range queue.inPlace {
-		if inPlace != other.inPlace[i] { return false }
+		if !inPlace.Equals(other.inPlace[i]) { return false }
 	}
 
 	return true

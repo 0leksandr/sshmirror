@@ -248,13 +248,13 @@ func (RemoteManager) New(config Config) RemoteManager {
 	}
 }
 func (manager RemoteManager) Update(updated []Updated) CancellableContext { // PRIORITY: merge children/parents
-	updatedPaths := make([]Path, 0, len(updated))
-	for _, _updated := range updated { updatedPaths = append(updatedPaths, _updated.path) }
+	updatedFilenames := make([]Filename, 0, len(updated))
+	for _, _updated := range updated { updatedFilenames = append(updatedFilenames, _updated.path.original) }
 	cmdContext := manager.RemoteClient.Update(updated)
 	cmdResult := make(chan error, 1)
 	go func() {
 		cmdResult <- manager.sync(
-			manager.message(updatedPaths, "+", "uploading"),
+			manager.message(updatedFilenames, "+", "uploading"),
 			cmdContext.Result,
 		)
 		close(cmdResult) // TODO: check if it's closed on cancel
@@ -265,13 +265,13 @@ func (manager RemoteManager) Update(updated []Updated) CancellableContext { // P
 	}
 }
 func (manager RemoteManager) InPlace(modifications []InPlaceModification) error {
-	movedPaths := make([]Path, 0, len(modifications))
+	movedFilenames := make([]Filename, 0, len(modifications))
 	for _, modification := range modifications {
-		movedPaths = append(movedPaths, modification.OldFilename())
+		movedFilenames = append(movedFilenames, modification.OldFilename())
 	}
 
 	return manager.sync(
-		manager.message(movedPaths, "^", "(re)moving"),
+		manager.message(movedFilenames, "^", "(re)moving"),
 		func() error { return manager.RemoteClient.InPlace(modifications) },
 	)
 }
@@ -370,18 +370,18 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 		manager.fallbackFiles(files)
 	}
 }
-func (manager RemoteManager) message(paths []Path, sign string, action string) string {
+func (manager RemoteManager) message(filenames []Filename, sign string, action string) string {
 	if manager.verbosity == 0 { return "" }
-	if manager.verbosity == 1 { return fmt.Sprintf("%s%d", sign, len(paths)) }
+	if manager.verbosity == 1 { return fmt.Sprintf("%s%d", sign, len(filenames)) }
 
-	message := fmt.Sprintf("%s %d file", action, len(paths))
-	if len(paths) > 1 { message += "s" }
+	message := fmt.Sprintf("%s %d file", action, len(filenames))
+	if len(filenames) > 1 { message += "s" }
 	if manager.verbosity == 2 {
 		return message
 	} else {
-		pathsStrings := make([]string, 0, len(paths))
-		for _, path := range paths {
-			pathsStrings = append(pathsStrings, path.original.Real()) // TODO: do not access private
+		pathsStrings := make([]string, 0, len(filenames))
+		for _, filename := range filenames {
+			pathsStrings = append(pathsStrings, filename.Real())
 		}
 		return message + ": " + strings.Join(pathsStrings, " ")
 	}
