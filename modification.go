@@ -18,7 +18,7 @@ type Modification interface {
 // requires changing order of operations
 
 type Updated struct { // any file, that must be uploaded // MAYBE: Written
-	path Path
+	path Path // MAYBE: Filename
 }
 type Deleted struct { // existing file, that was deleted
 	path Path
@@ -32,8 +32,7 @@ func (updated Updated) Join(queue *ModificationsQueue) {
 	for _, previouslyUpdated := range queue.updated {
 		if previouslyUpdated.path.Equals(updated.path) {
 			addToQueue = false
-		} else if previouslyUpdated.path.Relates(updated.path) {
-			inconsistentModifications()
+			break
 		}
 	}
 	if addToQueue { queue.updated = append(queue.updated, updated) }
@@ -42,33 +41,25 @@ func (deleted Deleted) Join(queue *ModificationsQueue) {
 	for i, updated := range queue.updated {
 		if deleted.path.IsParentOf(updated.path) {
 			queue.removeUpdated(i) // PRIORITY: `i--` or something else appropriate. To this, and ALL other relevant places
-		} else if updated.path.IsParentOf(deleted.path) {
-			inconsistentModifications()
 		}
 	}
 	queue.inPlace = append(queue.inPlace, deleted)
 }
 func (moved Moved) Join(queue *ModificationsQueue) {
-	if moved.from.Relates(moved.to) { return }
-
-	addToQueue := true
+	if moved.from.Equals(moved.to) { return }
 
 	for i, updated := range queue.updated {
 		if moved.to.IsParentOf(updated.path) {
 			queue.removeUpdated(i)
-		} else if updated.path.IsParentOf(moved.to) {
-			inconsistentModifications()
 		}
 	}
-	for _, updated := range queue.updated {
-		if updated.path.Equals(moved.from) { // PRIORITY: handle
-			queue.Add(Deleted{moved.from})
-			queue.Add(Updated{moved.to})
-			addToQueue = false
+	for i, updated := range queue.updated {
+		if moved.from.IsParentOf(updated.path) {
+			Must(queue.updated[i].path.Move(moved.from, moved.to))
 		}
 	}
 
-	if addToQueue { queue.inPlace = append(queue.inPlace, moved) }
+	queue.inPlace = append(queue.inPlace, moved)
 }
 func (updated Updated) AffectedPaths() []Path {
 	return []Path{updated.path}
@@ -165,6 +156,15 @@ func (queue *ModificationsQueue) Equals(other *ModificationsQueue) bool { // MAY
 
 	return true
 }
+func (queue *ModificationsQueue) FlushInPlace() []InPlaceModification {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+
+	inPlace := make([]InPlaceModification, 0, len(queue.inPlace))
+	copy(inPlace, queue.inPlace)
+	queue.inPlace = []InPlaceModification{}
+	return inPlace
+}
 func (queue *ModificationsQueue) removeUpdated(i int) {
 	last := len(queue.updated) - 1
 	if i != last { queue.updated[i] = queue.updated[last] }
@@ -209,8 +209,4 @@ func (queue *TransactionalQueue) queues() []*ModificationsQueue {
 	queues := []*ModificationsQueue{&queue.ModificationsQueue}
 	if queue.backup != nil { queues = append(queues, queue.backup) }
 	return queues
-}
-
-func inconsistentModifications() { // THINK: resolve
-	panic("inconsistent modifications")
 }

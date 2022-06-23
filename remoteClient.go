@@ -95,12 +95,15 @@ func (client *sshClient) Update(updated []Updated) CancellableContext {
 	}
 }
 func (client *sshClient) InPlace(modifications []InPlaceModification) error {
-	commands := make([]string, 0, len(modifications))
+	commands := make([]string, 0, len(modifications) + 1)
 	for _, modification := range modifications {
 		commands = append(commands, modification.Command(client.commander))
 	}
+	// last command, for indicating whether commands chain was received by server (we don't care whether some commands
+	// failed, as it is possible in legitimate cases - see test cases)
+	commands = append(commands, "true")
 
-	if client.runRemoteCommand(strings.Join(commands, " && ")) {
+	if client.runRemoteCommand(strings.Join(commands, " ; ")) {
 		return nil
 	} else {
 		return errors.New("could not apply in-place modifications") // MAYBE: actual error

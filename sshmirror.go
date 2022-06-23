@@ -69,35 +69,6 @@ func (filename Filename) Real() string {
 	return string(filename)
 }
 
-type Path struct {
-	original Filename
-	parts    []string
-	isDir    bool
-}
-func (Path) New(original Filename, isDir bool) Path {
-	return Path{
-		original: original,
-		parts:    strings.Split(original.Real(), string(os.PathSeparator)),
-		isDir:    isDir,
-	}
-}
-func (path Path) Equals(other Path) bool {
-	return path.original == other.original
-}
-func (path Path) IsParentOf(other Path) bool {
-	return Path{}.startsWith(path.parts, other.parts)
-}
-func (path Path) Relates(other Path) bool { // MAYBE: rename
-	return path.IsParentOf(other) || other.IsParentOf(path)
-}
-func (Path) startsWith(big, small []string) bool {
-	if len(big) < len(small) { return false }
-	for i, part := range small {
-		if part != big[i] { return false }
-	}
-	return true
-}
-
 type DummyFS struct {
 	files []Path // TODO: optimize by sorting
 }
