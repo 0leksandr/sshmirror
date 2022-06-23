@@ -90,21 +90,12 @@ func (chain TestModificationChain) scenarios() []TestScenario {
 	return scenarios
 }
 
-type TestModificationCase struct { // MAYBE: rename
-	chain                 TestModificationChain
-	expectedModifications []Modification
-	expectedQueue         *ModificationsQueue
-}
-
 var fileIndex = 0
-func generatePath(inTarget bool) Path {
+func generateFilename(inTarget bool) Filename {
 	dir := "."
 	if inTarget { dir += "/target" }
 	fileIndex++
-	return Path{}.New(
-		Filename(fmt.Sprintf("%s/file-%d", dir, fileIndex)),
-		false,
-	)
+	return Filename(fmt.Sprintf("%s/file-%d", dir, fileIndex))
 
 	//var symbols []string
 	//for _, symbol := range []rune("abc,.;'[]\\<>?\"{}|123`~!@#$%^&*()-=_+ абв🙂👍❗") {
@@ -135,7 +126,7 @@ func generatePath(inTarget bool) Path {
 	//		"target",
 	//	},
 	//) {
-	//	return generatePath(inTarget)
+	//	return generateFilename(inTarget)
 	//}
 	//return Filename(dir + filename)
 }
@@ -154,761 +145,210 @@ func remove(filename Filename) string {
 	return fmt.Sprintf("/bin/rm %s", filename.Escaped())
 }
 
-func basicModificationCases() []TestModificationCase {
-	return []TestModificationCase{
-		(func(a Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{},
-					after: TestModificationsList{
-						TestSimpleModification{create(a.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Updated{a},
-				},
-				expectedQueue: &ModificationsQueue{
-					updated: []Updated{
-						{a},
-					},
+func basicModificationChains() []TestModificationChain {
+	return []TestModificationChain{
+		(func(a Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{},
+				after: TestModificationsList{
+					TestSimpleModification{create(a)},
 				},
 			}
-		})(generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original},
-					after: TestModificationsList{
-						TestSimpleModification{remove(a.original)},
-						TestSimpleModification{move(b.original, a.original)},
-					},
+		})(generateFilename(true)),
+		(func(a, b Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, b},
+				after: TestModificationsList{
+					TestSimpleModification{remove(a)},
+					TestSimpleModification{move(b, a)},
 				},
-				expectedModifications: []Modification{
-					Deleted{a},
-					Moved{b, a},
+				//Moved{b, a},
+			}
+		})(generateFilename(true), generateFilename(true)),
+		(func(a, b, cExt Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{b},
+				after: TestModificationsList{
+					TestSimpleModification{write(a)},
+					TestSimpleModification{move(a, b)},
+					TestVariantsModification{[]string{
+						remove(b),
+						move(b, cExt),
+					}},
+					TestSimpleModification{MovementCleanup},
 				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Moved{b, a},
-
-						Deleted{a},
-						Moved{b, a},
-					},
+				// Deleted{a},
+				// Deleted{b},
+			}
+		})(generateFilename(true), generateFilename(true), generateFilename(false)),
+		(func(a, b, c Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, b)},
+					TestSimpleModification{move(b, c)},
+				},
+				//Moved{a, c},
+				//Deleted{b},
+			}
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a, b Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, b},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, b)},
+					TestSimpleModification{write(a)},
 				},
 			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b, cExt Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{b.original},
-					after: TestModificationsList{
-						TestSimpleModification{write(a.original)},
-						TestSimpleModification{move(a.original, b.original)},
-						TestVariantsModification{[]string{
-							remove(b.original),
-							move(b.original, cExt.original),
-						}},
-						TestSimpleModification{MovementCleanup},
-					},
-				},
-				expectedModifications: []Modification{
-					Updated{a},
-					Moved{a, b},
-					Deleted{b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						// Deleted{a},
-						// Deleted{b},
-
-						Moved{a, b},
-						Deleted{b},
-					},
+		})(generateFilename(true), generateFilename(true)),
+		(func(a, b, c Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, b, c},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, b)},
+					TestSimpleModification{write(b)},
+					TestVariantsModification{[]string{
+						"",
+						create(a),
+						write(a),
+						move(c, a),
+					}},
+					TestSimpleModification{write(a)},
 				},
 			}
-		})(generatePath(true), generatePath(true), generatePath(false)),
-		(func(a, b, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{move(b.original, c.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Moved{b, c},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Moved{a, c},
-						//Deleted{b},
-
-						Moved{a, b},
-						Moved{b, c},
-					},
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a, b, c Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, b, c},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, c)},
+					TestSimpleModification{move(b, a)},
+					TestSimpleModification{move(c, b)},
 				},
 			}
-		})(generatePath(true), generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(a.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{a},
-					},
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a, b, cExt Filename) TestModificationChain { // group begin: tricky Watcher cases
+			return TestModificationChain{
+				before: []Filename{a},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, cExt)},
+					TestVariantsModification{[]string{
+						create(b),
+						write(b),
+					}},
 				},
 			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(b.original)},
-						TestSimpleModification{write(a.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{b},
-					Updated{a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{b},
-						{a},
-					},
+		})(generateFilename(true), generateFilename(true), generateFilename(false)),
+		(func(a, bExt, cExt Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, cExt},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, bExt)},
+					TestSimpleModification{move(cExt, a)},
 				},
 			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original, c.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(b.original)},
-						TestSimpleModification{move(c.original, a.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{b},
-					Moved{c, a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Moved{c, a},
-
-						Moved{a, b},
-						Moved{c, a},
-					},
-					updated: []Updated{
-						{b},
-					},
+		})(generateFilename(true), generateFilename(false), generateFilename(false)),
+		(func(a, bExt, c Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, bExt)},
+					TestSimpleModification{move(bExt, c)},
 				},
 			}
-		})(generatePath(true), generatePath(true), generatePath(true)),
-		(func(a, b, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original, c.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, c.original)},
-						TestSimpleModification{move(b.original, a.original)},
-						TestSimpleModification{move(c.original, b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, c},
-					Moved{b, a},
-					Moved{c, b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Moved{a, c},
-						Moved{b, a},
-						Moved{c, b},
-					},
+		})(generateFilename(true), generateFilename(false), generateFilename(true)), // group end
+		(func(a, bExt, cExt Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, bExt, cExt}, // MAYBE: find a normal way to test, and remove `a` (or make it optional)
+				after: TestModificationsList{
+					TestSimpleModification{move(bExt, a)},
+					TestOptionalModification{write(a)},
+					TestSimpleModification{move(a, cExt)},
+					TestSimpleModification{MovementCleanup},
 				},
 			}
-		})(generatePath(true), generatePath(true), generatePath(true)),
-		(func(a, b, cExt Path) TestModificationCase { // group begin: tricky Watcher cases
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, cExt.original)},
-						TestSimpleModification{create(b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Deleted{a},
-					Updated{b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Deleted{a},
-					},
-					updated: []Updated{
-						{b},
-					},
+		})(generateFilename(true), generateFilename(false), generateFilename(false)),
+		(func(a, b, c Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, b},
+				after: TestModificationsList{
+					TestSimpleModification{move(b, c)},
+					TestSimpleModification{move(a, b)},
+					TestVariantsModification{[]string{
+						"",
+						write(c),
+						write(b),
+					}},
 				},
 			}
-		})(generatePath(true), generatePath(true), generatePath(false)),
-		(func(a, bExt, cExt Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, cExt.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, bExt.original)},
-						TestSimpleModification{move(cExt.original, a.original)},
-					},
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a, b, c Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, b, c},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, b)},
+					TestSimpleModification{move(b, c)},
+					TestSimpleModification{remove(c)},
 				},
-				expectedModifications: []Modification{
-					Deleted{a},
-					Updated{a},
+				//Deleted{b},
+				//Deleted{a},
+				//Deleted{c},
+			}
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a, b Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, b)},
+					TestSimpleModification{move(b, a)},
 				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//
-						Deleted{a},
-					},
-					updated: []Updated{
-						{a},
-					},
+				//Deleted{b},
+			}
+		})(generateFilename(true), generateFilename(true)),
+		(func(a, bExt, c Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, c},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, bExt)},
+					TestVariantsModification{[]string{
+						move(bExt, a),
+						move(bExt, c),
+					}},
 				},
 			}
-		})(generatePath(true), generatePath(false), generatePath(false)),
-		(func(a, bExt, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, bExt.original)},
-						TestSimpleModification{move(bExt.original, c.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Deleted{a},
-					Updated{c},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Deleted{a},
-					},
-					updated: []Updated{
-						{c},
-					},
+		})(generateFilename(true), generateFilename(false), generateFilename(true)),
+		(func(a, b Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, b)},
+					TestOptionalModification{write(a)},
+					TestOptionalModification{write(b)},
+					TestOptionalModification{remove(b)},
 				},
 			}
-		})(generatePath(true), generatePath(false), generatePath(true)), // group end
-		(func(a, bExt, cExt Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, bExt.original, cExt.original}, // MAYBE: find a normal way to test, and remove `a` (or make it optional)
-					after: TestModificationsList{
-						TestSimpleModification{move(bExt.original, a.original)},
-						TestOptionalModification{write(a.original)},
-						TestSimpleModification{move(a.original, cExt.original)},
-						TestSimpleModification{MovementCleanup},
-					},
-				},
-				expectedModifications: []Modification{
-					Updated{a},
-					Updated{a},
-					Deleted{a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Deleted{a},
-					},
+		})(generateFilename(true), generateFilename(true)),
+		(func(a, b, c Filename) TestModificationChain {
+			return TestModificationChain{
+				before: []Filename{a, c},
+				after: TestModificationsList{
+					TestSimpleModification{move(a, b)},
+					TestOptionalModification{write(a)},
+					TestSimpleModification{move(c, b)},
 				},
 			}
-		})(generatePath(true), generatePath(false), generatePath(false)),
-		(func(a, b, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(b.original, c.original)},
-						TestSimpleModification{move(a.original, b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{b, c},
-					Moved{a, b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Moved{b, c},
-						Moved{a, b},
-					},
+		})(generateFilename(true), generateFilename(true), generateFilename(true)),
+		(func(a, b Filename) TestModificationChain { // group begin
+			return TestModificationChain{
+				before: []Filename{a},
+				after: TestModificationsList{
+					TestOptionalModification{remove(a)},
+					TestSimpleModification{write(a)},
+					TestSimpleModification{move(a, b)},
+					TestOptionalModification{write(a)},
+					TestOptionalModification{remove(a)},
 				},
 			}
-		})(generatePath(true), generatePath(true), generatePath(true)),
-		(func(a, b, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(b.original, c.original)},
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(c.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{b, c},
-					Moved{a, b},
-					Updated{c},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Moved{a, b},
-
-						Moved{b, c},
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{c},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true), generatePath(true)),
-		(func(a, b, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(b.original, c.original)},
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{b, c},
-					Moved{a, b},
-					Updated{b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Moved{b, c},
-						//Deleted{a},
-
-						Moved{b, c},
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{b},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true), generatePath(true)),
-		(func(a, b, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, b.original, c.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{move(b.original, c.original)},
-						TestSimpleModification{remove(c.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Moved{b, c},
-					Deleted{c},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Deleted{b},
-						//Deleted{a},
-						//Deleted{c},
-
-						Moved{a, b},
-						Moved{b, c},
-						Deleted{c},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{move(b.original, a.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Moved{b, a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Deleted{b},
-
-						Moved{a, b},
-						Moved{b, a},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, bExt Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, bExt.original)},
-						TestSimpleModification{move(bExt.original, a.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Deleted{a},
-					Updated{a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//
-						Deleted{a},
-					},
-					updated: []Updated{
-						{a},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(false)),
-		(func(a, bExt, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, c.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, bExt.original)},
-						TestSimpleModification{move(bExt.original, c.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Deleted{a},
-					Updated{c},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Deleted{a},
-					},
-					updated: []Updated{
-						{c},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(false), generatePath(true)),
-		(func(a, b Path) TestModificationCase { // group begin
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(a.original)}, // MAYBE: optional. Split unit and integration tests data
-						TestSimpleModification{write(b.original)}, // MAYBE: optional. Split unit and integration tests data
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{a},
-					Updated{b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{a},
-						{b},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(a.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{a},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Deleted{a},
-
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{b},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)), // group end
-		(func(a, b Path) TestModificationCase { // group begin
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(a.original)}, // MAYBE: optional
-						TestSimpleModification{remove(b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{a},
-					Deleted{b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Deleted{b},
-
-						Moved{a, b},
-						Deleted{b},
-					},
-					updated: []Updated{
-						{a},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{remove(b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Deleted{b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Deleted{a},
-						//Deleted{b},
-
-						Moved{a, b},
-						Deleted{b},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)), // group end
-		(func(a, b, c Path) TestModificationCase { // group begin
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, c.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(a.original)}, // MAYBE: optional
-						TestSimpleModification{move(c.original, b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{a},
-					Moved{c, b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Moved{c, b},
-
-						Moved{a, b},
-						Moved{c, b},
-					},
-					updated: []Updated{
-						{a},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true), generatePath(true)),
-		(func(a, b, c Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original, c.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{move(c.original, b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Moved{c, b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Moved{c, b},
-						//Deleted{a},
-
-						Moved{a, b},
-						Moved{c, b},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true), generatePath(true)), // group end
-		(func(a, b Path) TestModificationCase { // group begin
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{remove(a.original)}, // MAYBE: optional
-						TestSimpleModification{write(a.original)}, // MAYBE: optional
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(a.original)}, // MAYBE: optional
-						TestSimpleModification{remove(a.original)}, // MAYBE: optional
-					},
-				},
-				expectedModifications: []Modification{
-					Deleted{a},
-					Updated{a},
-					Moved{a, b},
-					Updated{a},
-					Deleted{a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Deleted{a},
-
-						Deleted{a},
-						Moved{a, b},
-						Deleted{a},
-					},
-					updated: []Updated{
-						{b},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{},
-					after: TestModificationsList{
-						TestSimpleModification{write(a.original)},
-						TestSimpleModification{move(a.original, b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Updated{a},
-					Moved{a, b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						// Deleted{a},
-
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{b},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{remove(a.original)},
-						TestSimpleModification{write(a.original)},
-						TestSimpleModification{move(a.original, b.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Deleted{a},
-					Updated{a},
-					Moved{a, b},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						//Deleted{a},
-
-						Deleted{a},
-						Moved{a, b},
-					},
-					updated: []Updated{
-						{b},
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)),
-		(func(a, b Path) TestModificationCase {
-			return TestModificationCase{
-				chain: TestModificationChain{
-					before: []Filename{a.original},
-					after: TestModificationsList{
-						TestSimpleModification{move(a.original, b.original)},
-						TestSimpleModification{write(a.original)},
-						TestSimpleModification{remove(a.original)},
-					},
-				},
-				expectedModifications: []Modification{
-					Moved{a, b},
-					Updated{a},
-					Deleted{a},
-				},
-				expectedQueue: &ModificationsQueue{
-					inPlace: []InPlaceModification{
-						Moved{a, b},
-						Deleted{a}, // MAYBE: fix
-					},
-				},
-			}
-		})(generatePath(true), generatePath(true)), // group end
+		})(generateFilename(true), generateFilename(true)),
 	}
 }

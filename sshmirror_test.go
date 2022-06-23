@@ -105,8 +105,8 @@ func filenameModificationChains() []TestModificationChain {
 	return chains2
 }
 func modificationChains() []TestModificationChain {
-	basicCases := basicModificationCases()
-	chains := make([]TestModificationChain, 0, (len(basicCases) * len(delaysBasic)) + len(delaysMaster))
+	basicChains := basicModificationChains()
+	chains := make([]TestModificationChain, 0, (len(basicChains) * len(delaysBasic)) + len(delaysMaster))
 	simplify := func(modifications []TestModificationInterface) []TestModificationInterface {
 		simplified := make([]TestModificationInterface, 0, len(modifications))
 		for _, modification := range modifications {
@@ -126,9 +126,9 @@ func modificationChains() []TestModificationChain {
 		return merged
 	}
 	var masterChain TestModificationChain
-	for _, testCase := range basicCases {
-		masterChain.before = append(masterChain.before, testCase.chain.before...)
-		masterChain.after = append(masterChain.after, simplify(testCase.chain.after)...)
+	for _, chain := range basicChains {
+		masterChain.before = append(masterChain.before, chain.before...)
+		masterChain.after = append(masterChain.after, simplify(chain.after)...)
 	}
 	for _, delaySeconds := range delaysMaster {
 		chains = append(chains, TestModificationChain{
@@ -137,10 +137,10 @@ func modificationChains() []TestModificationChain {
 		})
 	}
 	for _, delaySeconds := range delaysBasic {
-		for _, testCase := range basicCases {
+		for _, chain := range basicChains {
 			chains = append(chains, TestModificationChain{
-				before: testCase.chain.before,
-				after:  mergeDelays(testCase.chain.after, delaySeconds),
+				before: chain.before,
+				after:  mergeDelays(chain.after, delaySeconds),
 			})
 		}
 	}
