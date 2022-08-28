@@ -13,7 +13,7 @@ type Pathname struct {
 
 type NodeStatus interface {
 	Modification(Filename) Modification
-	ShiftTo(Filename, *ModFS)
+	Shift(Node, Node, *ModFS)
 }
 type StatusUpdated struct {
 	NodeStatus
@@ -40,19 +40,21 @@ func (statusMovedTo StatusMovedTo) Modification(filename Filename) Modification 
 func (statusMovedFrom StatusMovedFrom) Modification(Filename) Modification {
 	return nil
 }
-func (statusUpdated StatusUpdated) ShiftTo(filename Filename, modFS *ModFS) {
-	modFS.Update(filename)
+func (statusUpdated StatusUpdated) Shift(from Node, _ Node, modFS *ModFS) {
+	file := from.(*File)
+	modFS.changes.Del(file)
+	modFS.changes.Add(file, StatusUpdated{})
 }
-func (statusDeleted StatusDeleted) ShiftTo(Filename, *ModFS) {
+func (statusDeleted StatusDeleted) Shift(Node, Node, *ModFS) {
 	panic("cannot shift the deleted") // THINK: could it be a valid case?
 }
-func (statusMovedTo StatusMovedTo) ShiftTo(filename Filename, modFS *ModFS) {
-	modFS.Move(
-		statusMovedTo.movedFrom.Pathname(),
-		filename,
-	)
+func (statusMovedTo StatusMovedTo) Shift(from Node, to Node, modFS *ModFS) {
+	modFS.changes.Del(from) // TODO: delete?
+	modFS.changes.Del(to) // TODO: delete?
+	modFS.changes.Add(from, StatusMovedFrom{})
+	modFS.changes.Add(to, StatusMovedTo{movedFrom: from})
 }
-func (statusMovedFrom StatusMovedFrom) ShiftTo(Filename, *ModFS) {
+func (statusMovedFrom StatusMovedFrom) Shift(Node, Node, *ModFS) {
 	panic("cannot shift the moved") // THINK: same as above?
 }
 
@@ -176,22 +178,22 @@ func (modFS *ModFS) Move(from Pathname, to Filename) {
 		IsDir:    from.IsDir,
 	})
 	if nodeStatus, ok := modFS.changes.Get(nodeFrom); ok {
-		nodeStatus.(NodeStatus).ShiftTo(to, modFS)
+		nodeStatus.(NodeStatus).Shift(nodeFrom, nodeTo, modFS)
 	}
 	modFS.changes.Del(nodeFrom) // TODO: delete?
 	modFS.changes.Add(nodeFrom, StatusMovedFrom{})
 	nodeTo.ResetChanges(modFS)
 	modFS.changes.Add(nodeTo, StatusMovedTo{movedFrom: nodeFrom})
 }
-func (modFS *ModFS) FlushInPlaceModifications() []Modification {
-	modifications := make([]Modification, 0)
+func (modFS *ModFS) FlushInPlaceModifications() []InPlaceModification {
+	modifications := make([]InPlaceModification, 0)
 	for _, pair := range modFS.changes.Pairs() {
 		status := pair.Value.(NodeStatus)
 		if _, not := status.(StatusUpdated); !not {
 			node := pair.Key.(Node)
 			modification := status.Modification(node.Filename())
 			if modification != nil {
-				modifications = append(modifications, modification)
+				modifications = append(modifications, modification.(InPlaceModification))
 				modFS.changes.Del(node)
 			}
 		}

@@ -126,7 +126,7 @@ func (formatter LogFormatter) Format(message string, values ...interface{}) []st
 	}
 }
 func (formatter LogFormatter) addTrace(text string) string {
-	trace := my.Trace(false).SkipFile(1).String()
+	trace := my.Trace{}.New().SkipFile(1)[0].String()
 	if formatter.timestamps {
 		t := time.Now().String()
 		t = regexp.MustCompile(" m=\\+([^ ]+)$").FindStringSubmatch(t)[1]
