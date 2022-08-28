@@ -20,7 +20,6 @@ import (
 
 type Watcher interface {
 	io.Closer
-	LoggerAware
 	Modifications() <-chan Modification
 	Name() string
 }
@@ -103,9 +102,6 @@ func (watcher *FsnotifyWatcher) Close() error {
 func (watcher *FsnotifyWatcher) Modifications() <-chan Modification {
 	return watcher.modifications
 }
-func (watcher *FsnotifyWatcher) SetLogger(Logger) {
-	// MAYBE: implement
-}
 func (FsnotifyWatcher) watchDirRecursive(
 	path string,
 	ignored *regexp.Regexp,
@@ -155,7 +151,7 @@ type InotifyWatcher struct {
 }
 func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, error) {
 	modifications := make(chan Modification) // MAYBE: reserve size
-	watcher := InotifyWatcher{
+	watcher := &InotifyWatcher{
 		modifications: modifications,
 		logger:        logger,
 		onClose: func() error {
@@ -165,12 +161,12 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	}
 
 	nrFiles, errCalculateFiles := watcher.getNrFiles(root)
-	if errCalculateFiles != nil { return &watcher, errCalculateFiles }
+	if errCalculateFiles != nil { return watcher, errCalculateFiles }
 	maxUserWatchers, errMaxUserWatchers := watcher.getMaxUserWatchers()
-	if errMaxUserWatchers != nil { return &watcher, errMaxUserWatchers }
+	if errMaxUserWatchers != nil { return watcher, errMaxUserWatchers }
 	requiredNrWatchers := watcher.getRequiredNrWatchers(nrFiles)
 	if requiredNrWatchers > maxUserWatchers { // THINK: https://www.baeldung.com/linux/inotify-upper-limit-reached
-		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return &watcher, err }
+		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return watcher, err }
 	}
 
 	const CloseWriteStr = "CLOSE_WRITE"
@@ -287,7 +283,6 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	put := func(modification Modification) { watcher.modifications <- modification }
 	var processEvent func(Event)
 	processEvent = func(event Event) {
-		watcher.logger.Debug("event", event)
 		path := event.path
 		switch event.eventType {
 			case CloseWriteCode: put(Updated{path})
@@ -329,7 +324,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	}
 
 	// TODO: read error/info stream, await for watches to establish
-	return &watcher, errCommandStart
+	return watcher, errCommandStart
 }
 func (InotifyWatcher) Name() string {
 	return "inotify"
@@ -339,9 +334,6 @@ func (watcher *InotifyWatcher) Close() error {
 }
 func (watcher *InotifyWatcher) Modifications() <-chan Modification {
 	return watcher.modifications
-}
-func (watcher *InotifyWatcher) SetLogger(logger Logger) {
-	watcher.logger = logger
 }
 func (watcher *InotifyWatcher) getNrFiles(root string) (uint64, error) {
 	var nrFiles uint64
@@ -376,24 +368,13 @@ func (watcher *InotifyWatcher) getNrFiles(root string) (uint64, error) {
 	if errStopwatch != nil { return 0, errStopwatch }
 	return nrFiles, nil
 }
-func (watcher *InotifyWatcher) getMaxUserWatchers() (uint64, error) {
-	var maxNrWatchers uint64
-	var errParseUint, errCat error
-	if !my.RunCommand(
-		"",
-		"cat /proc/sys/fs/inotify/max_user_watches",
-		func(out string) {
-			maxNrWatchers, errParseUint = strconv.ParseUint(out, 10, 64)
-		},
-		func(err string) {
-			errCat = errors.New(err)
-		},
-	) {
-		return 0, errors.New("could not determine max_user_watchers")
-	}
-	if errCat != nil { return 0, errCat }
+func (watcher *InotifyWatcher) getMaxUserWatchers() (uint64, error) { // TODO: update when new files/directories are added
+	out, errOut := exec.Command("cat", "/proc/sys/fs/inotify/max_user_watches").Output()
+	if errOut != nil { return 0, errOut }
+	outStr := strings.TrimSuffix(string(out), "\n")
+	maxNrWatchers, errParseUint := strconv.ParseUint(outStr, 10, 64)
 	if errParseUint != nil { return 0, errParseUint }
-	if maxNrWatchers == 0 { return 0, errors.New("could not determine max_user_watchers") }
+	if maxNrWatchers == 0 { return 0, my.Error{}.New("could not determine max_user_watchers") }
 
 	return maxNrWatchers, nil
 }

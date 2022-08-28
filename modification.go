@@ -78,7 +78,7 @@ type InPlaceModification interface { // MAYBE: rename
 	Equals(modification InPlaceModification) bool
 }
 func (deleted Deleted) Command(commander RemoteCommander) string {
-	return commander.DeleteCommand(deleted.path.original)
+	return commander.DeleteCommand(deleted.path)
 }
 func (deleted Deleted) OldFilename() Filename {
 	return deleted.path.original
@@ -93,7 +93,7 @@ func (deleted Deleted) Equals(other InPlaceModification) bool {
 	return false
 }
 func (moved Moved) Command(commander RemoteCommander) string {
-	return commander.MoveCommand(moved.from.original, moved.to.original)
+	return commander.MoveCommand(moved.from, moved.to)
 }
 func (moved Moved) OldFilename() Filename {
 	return moved.from.original

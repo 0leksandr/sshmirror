@@ -8,11 +8,6 @@ import (
 	"time"
 )
 
-type TestCase struct {
-	command  string
-	expected Modification
-}
-
 func TestWatchers(t *testing.T) {
 	defer func() { clearDir(getSandbox()) }()
 
@@ -35,26 +30,50 @@ func TestWatchers(t *testing.T) {
 		(func() {
 			defer clearDir(targetDir)
 
-			for _, testCase := range []TestCase{
-				{create("a"), Updated{Path{}.New("a", false)}},
-				{write("a"), Updated{Path{}.New("a", false)}},
-				{write("b"), Updated{Path{}.New("b", false)}},
-				{
-					move("b", "c"),
-					Moved{Path{}.New("b", false), Path{}.New("c", false)},
-				},
-				{move("a", "../a"), Deleted{Path{}.New("a", false)}},
-				{remove("c"), Deleted{Path{}.New("c", false)}},
-			} {
+			runCommand := func(command string) {
 				my.RunCommand(
 					targetDir,
-					testCase.command,
+					command,
 					nil,
 					func(err string) { panic(err) },
 				)
-				time.Sleep(3 * time.Millisecond)
-				my.AssertEquals(t, <-watcher.Modifications(), testCase.expected, watcher, testCase)
 			}
+			assertModification := func(command string, expected Modification) {
+				runCommand(command)
+
+				select {
+					case modification := <-watcher.Modifications():
+						my.AssertEquals(t, modification, expected, watcher, command, modification)
+					case <-time.After(10 * time.Millisecond):
+						my.Assert(t, expected == nil, watcher, command)
+				}
+			}
+
+			assertModification(mkdir("aaa"), nil)
+
+			for _, filename := range []Filename{
+				"a", // MAYBE: use `generateFilenamePart`
+				"aaa/bbb",
+			} {
+				assertModification(create(filename), Updated{Path{}.New(filename, false)})
+				assertModification(move(filename, "../a"), Deleted{Path{}.New(filename, false)})
+				assertModification(write(filename), Updated{Path{}.New(filename, false)})
+				assertModification(remove(filename), Deleted{Path{}.New(filename, false)})
+			}
+
+			assertModification(write("a"), Updated{Path{}.New("a", false)})
+			assertModification(
+				move("a", "b"),
+				Moved{Path{}.New("a", false), Path{}.New("b", false)},
+			)
+			assertModification(
+				move("b", "aaa/c"),
+				Moved{Path{}.New("b", false), Path{}.New("aaa/c", false)},
+			)
+			assertModification(
+				move("aaa", "bbb"),
+				Moved{Path{}.New("aaa", true), Path{}.New("bbb", true)},
+			)
 		})()
 	}
 }

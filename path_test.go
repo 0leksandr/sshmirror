@@ -97,6 +97,21 @@ func TestPath_Relates(t *testing.T) {
 		my.Assert(t, !paths[0].Relates(paths[1]), paths)
 	}
 }
+func TestPath_Parent(t *testing.T) {
+	type TestCase struct {
+		original       Path
+		expectedParent Filename
+	}
+	for _, testCase := range []TestCase{
+		{Path{}.New("aaa/bbb/ccc", false), "aaa/bbb"},
+		{Path{}.New("aaa/bbb/ccc", true), "aaa/bbb"},
+		{Path{}.New("aaa/bbb", true), "aaa"},
+		{Path{}.New("aaa", true), ""},
+		{Path{}.New("", true), ""},
+	} {
+		my.AssertEquals(t, testCase.original.Parent(), Path{}.New(testCase.expectedParent, true), testCase)
+	}
+}
 func TestPath_Move(t *testing.T) {
 	assertMoved := func(path, from, to, expected Path) {
 		context := []interface{}{path, from, to}

@@ -14,7 +14,6 @@ import (
 
 type RemoteClient interface {
 	io.Closer
-	LoggerAware
 	Update([]Updated) CancellableContext
 	InPlace([]InPlaceModification) error
 	Ready() *Locker
@@ -52,10 +51,7 @@ func (sshClient) New(config Config) *sshClient {
 		controlPath: controlPath,
 		masterReady: &waitingMaster,
 		commander:   UnixCommander{},
-		logger:      Logger{
-			debug: NullLogger{},
-			error: StdErrLogger{},
-		},
+		logger:      config.logger,
 	}
 
 	client.masterReady.Lock()
@@ -111,9 +107,6 @@ func (client *sshClient) InPlace(modifications []InPlaceModification) error {
 }
 func (client *sshClient) Ready() *Locker {
 	return client.masterReady
-}
-func (client *sshClient) SetLogger(logger Logger) {
-	client.logger = logger
 }
 func (client *sshClient) keepMasterConnection() {
 	client.closeMaster()

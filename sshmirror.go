@@ -24,6 +24,7 @@ import (
 // TODO: ignore special types of files (pipes, block devices etc.)
 // TODO: support directories
 // TODO: support scp without rsync
+// TODO: scan contents of new subdirectories: https://stackoverflow.com/a/17586891
 // MAYBE: support symlinks
 // MAYBE: automatically adjust timeout based on server response rate
 // MAYBE: copy permissions
@@ -148,8 +149,10 @@ type Config struct {
 	connTimeout  int
 	verbosity    int
 	exclude      string
-	errorCmd     string
 	watcher      string
+
+	// services?
+	logger Logger
 }
 func (Config) ParseArguments() Config {
 	identityFile := flag.String("i", "", "identity file (rsa)")
@@ -201,8 +204,17 @@ func (Config) ParseArguments() Config {
 		connTimeout:  *connTimeout,
 		verbosity:    *verbosity,
 		exclude:      *exclude,
-		errorCmd:     *errorCmd,
 		watcher:      *watcher,
+		logger:       Logger{
+			debug: NullLogger{},
+			error: func() ErrorLogger {
+				if *errorCmd != "" {
+					return ErrorCmdLogger{errorCmd: *errorCmd}
+				} else {
+					return StdErrLogger{}
+				}
+			}(),
+		},
 	}
 }
 
@@ -248,9 +260,6 @@ func (manager RemoteManager) InPlace(modifications []InPlaceModification) error 
 }
 func (manager RemoteManager) Ready() *Locker { // MAYBE: remove
 	return manager.RemoteClient.Ready()
-}
-func (manager RemoteManager) SetLogger(logger Logger) {
-	manager.RemoteClient.SetLogger(logger)
 }
 func (manager RemoteManager) Fallback(queue *ModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
@@ -406,7 +415,6 @@ func wrapApostrophe(text string) string {
 
 type SSHMirror struct {
 	io.Closer
-	LoggerAware
 	root    string // TODO: Filename
 	watcher Watcher
 	remote  RemoteManager
@@ -414,16 +422,7 @@ type SSHMirror struct {
 	onReady func() // only for test
 }
 func (SSHMirror) New(config Config) *SSHMirror {
-	logger := Logger{
-		debug: NullLogger{},
-		error: func() ErrorLogger {
-			if config.errorCmd != "" {
-				return ErrorCmdLogger{errorCmd: config.errorCmd}
-			} else {
-				return StdErrLogger{}
-			}
-		}(),
-	}
+	logger := config.logger
 
 	watcher := (func() Watcher {
 		switch config.watcher {
@@ -449,13 +448,10 @@ func (SSHMirror) New(config Config) *SSHMirror {
 		}
 	})()
 
-	remoteManager := RemoteManager{}.New(config)
-	remoteManager.SetLogger(logger)
-
 	return &SSHMirror{
 		root:    config.localDir,
 		watcher: watcher,
-		remote:  remoteManager,
+		remote:  RemoteManager{}.New(config),
 		logger:  logger,
 		onReady: func() {},
 	}
@@ -467,11 +463,6 @@ func (client *SSHMirror) Close() error {
 	if err1 != nil { return err1 }
 	if err2 != nil { return err2 }
 	return nil
-}
-func (client *SSHMirror) SetLogger(logger Logger) {
-	client.logger = logger
-	client.watcher.SetLogger(logger)
-	client.remote.SetLogger(logger)
 }
 func (client *SSHMirror) Init(batchSize FileSize) error {
 	// MAYBE: progress indicator
@@ -576,10 +567,14 @@ func (client *SSHMirror) Run() {
 		}
 
 		if queue.IsEmpty() { // during upload, multiple syncs were produces, first sync synchronized everything
+			client.logger.Debug("queue empty")
+			client.onReady() // for "empty" move - when file was moved outside and then into same location
 			return
 		}
 
 		client.sync(&queue, modifiedPaths)
+
+		client.logger.Debug("queue after sync", &queue)
 
 		if queue.IsEmpty() { client.onReady() }
 	}
@@ -633,10 +628,11 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedPaths *SwitchCh
 		for len(queue.updated) > 0 {
 			queue.Begin()
 			updated := make([]Updated, len(queue.updated))
-			copy(updated, queue.updated)
+			copy(updated, queue.updated) // TODO: atomic with the next line
 			queue.updated = []Updated{}
 			client.logger.Debug("updated", updated)
 			command := client.remote.Update(updated)
+			modifiedPaths.On()
 			commandDone := make(chan struct{}, 0) // TODO: check
 			var goroutineStarted Locker
 			goroutineStarted.Lock()
@@ -658,7 +654,6 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedPaths *SwitchCh
 				}
 			}()
 			goroutineStarted.Wait()
-			modifiedPaths.On()
 			err := command.Result()
 			modifiedPaths.Off()
 			close(commandDone)

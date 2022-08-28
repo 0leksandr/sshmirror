@@ -12,9 +12,16 @@ type Path struct {
 	isDir    bool
 }
 func (Path) New(original Filename, isDir bool) Path {
+	var parts []string
+	switch original {
+		case "":                         parts = []string{}
+		case Filename(os.PathSeparator): parts = []string{}
+		default:                         parts = strings.Split(original.Real(), string(os.PathSeparator))
+	}
+
 	return Path{
 		original: original,
-		parts:    strings.Split(original.Real(), string(os.PathSeparator)),
+		parts:    parts,
 		isDir:    isDir,
 	}
 }
@@ -36,6 +43,14 @@ func (path Path) IsParentOf(other Path) bool {
 }
 func (path Path) Relates(other Path) bool { // MAYBE: rename
 	return path.IsParentOf(other) || other.IsParentOf(path)
+}
+func (path Path) Parent() Path {
+	if len(path.parts) == 0 {
+		return path
+	} else {
+		parts := path.parts[:len(path.parts) - 1]
+		return Path{}.New(Filename(strings.Join(parts, string(os.PathSeparator))), true)
+	}
 }
 func (path *Path) Move(from, to Path) error {
 	if from.IsParentOf(*path) {
