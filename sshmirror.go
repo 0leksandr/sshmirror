@@ -70,7 +70,7 @@ func (filename Filename) Real() string {
 	return string(filename)
 }
 
-type DummyFS struct {
+type DummyFS struct { // TODO: remove?
 	files []Path // TODO: optimize by sorting
 }
 func (dummyFS *DummyFS) AddFile(filename Filename) {
@@ -263,12 +263,9 @@ func (manager RemoteManager) Ready() *Locker { // MAYBE: remove
 }
 func (manager RemoteManager) Fallback(queue *ModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
-	for _, updated := range queue.updated { files = append(files, updated.path.original) }
-	for _, inPlaceModification := range queue.inPlace {
-		for _, filename := range inPlaceModification.AffectedFiles() {
-			files = append(files, filename)
-		}
-	}
+	queue.fs.changes.Each(func(key interface{}, value interface{}) {
+		files = append(files, key.(Node).Filename())
+	})
 
 	manager.fallbackFiles(files)
 }
@@ -607,39 +604,40 @@ func (client *SSHMirror) Run() {
 func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedPaths *SwitchChannelPaths) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
 
-	syncInPlace := func() {
-		for len(queue.inPlace) > 0 {
+	main: for {
+		for {
 			queue.Begin()
-			inPlace := make([]InPlaceModification, len(queue.inPlace))
-			copy(inPlace, queue.inPlace)
-			queue.inPlace = []InPlaceModification{}
-			client.logger.Debug("inPlace", inPlace)
-			if err := client.remote.InPlace(inPlace); err == nil {
-				client.logger.Debug("success")
-				queue.Commit()
-			} else {
-				client.logger.Debug("fail")
-				client.logger.Error(err.Error())
-				queue.Rollback()
+			if inPlaceModifications := queue.fs.FlushInPlaceModifications(); len(inPlaceModifications) > 0 {
+				// sync
+				client.logger.Debug("inPlaceModifications", inPlaceModifications)
+
+				if err := client.remote.InPlace(inPlaceModifications); err == nil {
+					client.logger.Debug("success")
+					queue.Commit()
+				} else {
+					client.logger.Debug("fail")
+					client.logger.Error(err.Error())
+					queue.Rollback()
+				}
+
+				continue main
 			}
+			queue.Commit()
+			break
 		}
-	}
-	syncUpdated := func() {
-		for len(queue.updated) > 0 {
+		for {
 			queue.Begin()
-			updated := make([]Updated, len(queue.updated))
-			copy(updated, queue.updated) // TODO: atomic with the next line
-			queue.updated = []Updated{}
-			client.logger.Debug("updated", updated)
-			command := client.remote.Update(updated)
-			modifiedPaths.On()
-			commandDone := make(chan struct{}, 0) // TODO: check
-			var goroutineStarted Locker
-			goroutineStarted.Lock()
-			go func() {
-				goroutineStarted.Unlock()
-				for {
-					select {
+			if updated := queue.fs.FlushUpdated(); len(updated) > 0 {
+				client.logger.Debug("updated", updated)
+				command := client.remote.Update(updated)
+				modifiedPaths.On()
+				commandDone := make(chan struct{}, 0) // TODO: check
+				var goroutineStarted Locker
+				goroutineStarted.Lock()
+				go func() {
+					goroutineStarted.Unlock()
+					for {
+						select {
 						case modifiedPath, ok := <-modifiedPaths.Get():
 							if !ok { panic("modifiedPaths channel closed") }
 							for _, _updated := range updated { // MAYBE: map
@@ -650,29 +648,30 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedPaths *SwitchCh
 							}
 						case <-commandDone:
 							return
+						}
 					}
+				}()
+				goroutineStarted.Wait()
+				err := command.Result()
+				modifiedPaths.Off()
+				close(commandDone)
+				if err == nil {
+					client.logger.Debug("success")
+					queue.Commit()
+				} else {
+					if err.Error() != "signal: terminated" { // MAYBE: something smarter
+						client.logger.Debug("fail")
+						client.logger.Error(err.Error())
+					}
+					queue.Rollback()
 				}
-			}()
-			goroutineStarted.Wait()
-			err := command.Result()
-			modifiedPaths.Off()
-			close(commandDone)
-			if err == nil {
-				client.logger.Debug("success")
-				queue.Commit()
-			} else {
-				if err.Error() != "signal: terminated" { // MAYBE: something smarter
-					client.logger.Debug("fail")
-					client.logger.Error(err.Error())
-				}
-				queue.Rollback()
+
+				continue main
 			}
-			syncInPlace()
+			queue.Commit()
+			break
 		}
-	}
-	for !queue.IsEmpty() {
-		syncInPlace()
-		syncUpdated()
+		break
 	}
 }
 

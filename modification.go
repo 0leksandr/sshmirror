@@ -27,39 +27,26 @@ type Moved struct { // existing file, that was moved to a new location
 	from Path
 	to   Path
 }
-func (updated Updated) Join(queue *ModificationsQueue) {
-	addToQueue := true
-	for _, previouslyUpdated := range queue.updated {
-		if previouslyUpdated.path.Equals(updated.path) {
-			addToQueue = false
-			break
-		}
-	}
-	if addToQueue { queue.updated = append(queue.updated, updated) }
+func (updated Updated) Join(queue *ModificationsQueue) error {
+	queue.fs.Update(updated.filename)
+	return nil
 }
-func (deleted Deleted) Join(queue *ModificationsQueue) {
-	for i, updated := range queue.updated {
-		if deleted.path.IsParentOf(updated.path) {
-			queue.removeUpdated(i) // PRIORITY: `i--` or something else appropriate. To this, and ALL other relevant places
-		}
-	}
-	queue.inPlace = append(queue.inPlace, deleted)
+func (deleted Deleted) Join(queue *ModificationsQueue) error {
+	queue.fs.Delete(Pathname{
+		Filename: deleted.filename,
+		IsDir:    false,
+	})
+	return nil
 }
-func (moved Moved) Join(queue *ModificationsQueue) {
-	if moved.from.Equals(moved.to) { return }
-
-	for i, updated := range queue.updated {
-		if moved.to.IsParentOf(updated.path) {
-			queue.removeUpdated(i)
-		}
-	}
-	for i, updated := range queue.updated {
-		if moved.from.IsParentOf(updated.path) {
-			Must(queue.updated[i].path.Move(moved.from, moved.to))
-		}
-	}
-
-	queue.inPlace = append(queue.inPlace, moved)
+func (moved Moved) Join(queue *ModificationsQueue) error {
+	queue.fs.Move(
+		Pathname{
+			Filename: moved.from,
+			IsDir:    false,
+		},
+		moved.to,
+	)
+	return nil
 }
 func (updated Updated) AffectedPaths() []Path {
 	return []Path{updated.path}
@@ -112,10 +99,14 @@ func (moved Moved) Equals(other InPlaceModification) bool {
 }
 
 type ModificationsQueue struct {
-	// MAYBE: map path: modification. For moved, key is moved.to
-	updated []Updated
-	inPlace []InPlaceModification
-	mutex   sync.Mutex
+	fs    *ModFS
+	mutex sync.Mutex
+}
+//goland:noinspection GoVetCopyLock
+func (ModificationsQueue) New() *ModificationsQueue {
+	return &ModificationsQueue{
+		fs: ModFS{}.New(),
+	}
 }
 func (queue *ModificationsQueue) AtomicAdd(modification Modification) {
 	queue.mutex.Lock()
@@ -125,50 +116,19 @@ func (queue *ModificationsQueue) AtomicAdd(modification Modification) {
 func (queue *ModificationsQueue) Add(modification Modification) {
 	modification.Join(queue)
 }
+func (queue *ModificationsQueue) HasModifications(filename Filename) bool {
+	return queue.fs.changes.Has(queue.fs.getFile(filename))
+}
 func (queue *ModificationsQueue) IsEmpty() bool {
 	queue.mutex.Lock()
 	defer queue.mutex.Unlock()
 
-	return len(queue.updated) == 0 && len(queue.inPlace) == 0
+	return queue.fs.changes.Len() == 0
 }
 func (queue *ModificationsQueue) Copy() *ModificationsQueue {
-	updated := make([]Updated, len(queue.updated))
-	inPlace := make([]InPlaceModification, len(queue.inPlace))
-	copy(updated, queue.updated)
-	copy(inPlace, queue.inPlace)
-
 	return &ModificationsQueue{
-		updated: updated,
-		inPlace: inPlace,
+		fs: queue.fs.Copy(),
 	}
-}
-func (queue *ModificationsQueue) Equals(other *ModificationsQueue) bool { // MAYBE: remove
-	if len(queue.updated) != len(other.updated) || len(queue.inPlace) != len(other.inPlace) {
-		return false
-	}
-
-	for i, updated := range queue.updated {
-		if !updated.path.Equals(other.updated[i].path) { return false }
-	}
-	for i, inPlace := range queue.inPlace {
-		if !inPlace.Equals(other.inPlace[i]) { return false }
-	}
-
-	return true
-}
-func (queue *ModificationsQueue) FlushInPlace() []InPlaceModification {
-	queue.mutex.Lock()
-	defer queue.mutex.Unlock()
-
-	inPlace := make([]InPlaceModification, 0, len(queue.inPlace))
-	copy(inPlace, queue.inPlace)
-	queue.inPlace = []InPlaceModification{}
-	return inPlace
-}
-func (queue *ModificationsQueue) removeUpdated(i int) {
-	last := len(queue.updated) - 1
-	if i != last { queue.updated[i] = queue.updated[last] }
-	queue.updated = queue.updated[:last]
 }
 
 type TransactionalQueue struct { // TODO: rename
