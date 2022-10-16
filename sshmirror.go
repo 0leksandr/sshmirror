@@ -110,8 +110,9 @@ func (fileSize FileSize) IsLess(other FileSize) bool {
 }
 
 type CancellableContext struct { // MAYBE: rename
-	Result func() error
-	Cancel func()
+	Result     func() error
+	Cancel     func()
+	ResultChan <-chan error // TODO: remove/handle
 }
 
 type SwitchChannelPaths struct {
@@ -243,8 +244,9 @@ func (manager RemoteManager) Update(updated []Updated) CancellableContext { // P
 		close(cmdResult) // TODO: check if it's closed on cancel
 	}()
 	return CancellableContext{
-		Result: func() error { return <-cmdResult },
-		Cancel: cmdContext.Cancel,
+		Result:     func() error { return <-cmdResult },
+		Cancel:     cmdContext.Cancel,
+		ResultChan: cmdResult,
 	}
 }
 func (manager RemoteManager) InPlace(modifications []InPlaceModification) error {
@@ -263,9 +265,15 @@ func (manager RemoteManager) Ready() *Locker { // MAYBE: remove
 }
 func (manager RemoteManager) Fallback(queue *ModificationsQueue) { // MAYBE: legacy, remove
 	var files []Filename
-	queue.fs.changes.Each(func(key interface{}, value interface{}) {
-		files = append(files, key.(Node).Filename())
-	})
+
+	for _, inPlaceModification := range queue.inPlace {
+		files = append(files, inPlaceModification.AffectedFiles()...)
+	}
+	queue.inPlace = make([]InPlaceModification, 0) // TODO: encapsulate
+
+	for _, updated := range queue.GetUpdated(true) {
+		files = append(files, updated.path.original)
+	}
 
 	manager.fallbackFiles(files)
 }
@@ -528,7 +536,7 @@ func (client *SSHMirror) Init(batchSize FileSize) error {
 	}
 }
 func (client *SSHMirror) Run() {
-	queue := TransactionalQueue{}
+	queue := TransactionalQueue{}.New()
 	var syncing sync.Mutex
 	var cancelFirst *context.CancelFunc
 	var cancelLast *context.CancelFunc
@@ -569,9 +577,9 @@ func (client *SSHMirror) Run() {
 			return
 		}
 
-		client.sync(&queue, modifiedPaths)
+		client.sync(queue, modifiedPaths)
 
-		client.logger.Debug("queue after sync", &queue)
+		client.logger.Debug("queue after sync", queue)
 
 		if queue.IsEmpty() { client.onReady() }
 	}
@@ -604,73 +612,61 @@ func (client *SSHMirror) Run() {
 func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedPaths *SwitchChannelPaths) { // THINK: limit of tries
 	client.logger.Debug("sync.queue", queue)
 
-	main: for {
-		for {
-			queue.Begin()
-			if inPlaceModifications := queue.fs.FlushInPlaceModifications(); len(inPlaceModifications) > 0 {
-				// sync
-				client.logger.Debug("inPlaceModifications", inPlaceModifications)
+	for {
+		client.logger.Debug("sync cycle")
 
-				if err := client.remote.InPlace(inPlaceModifications); err == nil {
-					client.logger.Debug("success")
-					queue.Commit()
-				} else {
-					client.logger.Debug("fail")
-					client.logger.Error(err.Error())
-					queue.Rollback()
-				}
-
-				continue main
+		queue.Begin()
+		if inPlace := queue.GetInPlace(true); len(inPlace) > 0 {
+			client.logger.Debug("inPlace", inPlace)
+			if err := client.remote.InPlace(inPlace); err == nil {
+				client.logger.Debug("success")
+				queue.Commit()
+			} else {
+				client.logger.Debug("fail")
+				client.logger.Error(err.Error())
+				queue.Rollback()
 			}
-			queue.Commit()
-			break
+
+			continue
 		}
-		for {
-			queue.Begin()
-			if updated := queue.fs.FlushUpdated(); len(updated) > 0 {
-				client.logger.Debug("updated", updated)
-				command := client.remote.Update(updated)
-				modifiedPaths.On()
-				commandDone := make(chan struct{}, 0) // TODO: check
-				var goroutineStarted Locker
-				goroutineStarted.Lock()
-				go func() {
-					goroutineStarted.Unlock()
-					for {
-						select {
-						case modifiedPath, ok := <-modifiedPaths.Get():
-							if !ok { panic("modifiedPaths channel closed") }
-							for _, _updated := range updated { // MAYBE: map
-								if modifiedPath.Relates(_updated.path) {
-									client.logger.Debug("cancelling upload. Modified path", modifiedPath)
-									command.Cancel()
-								}
+		queue.Commit()
+
+		queue.Begin()
+		if updated := queue.GetUpdated(true); len(updated) > 0 {
+			client.logger.Debug("updated", updated)
+			command := client.remote.Update(updated)
+			modifiedPaths.On()
+
+			uploading: for {
+				select {
+					case modifiedPath, ok := <-modifiedPaths.Get():
+						if !ok { panic("modifiedPaths channel closed") }
+						for _, _updated := range updated { // MAYBE: map
+							if modifiedPath.Relates(_updated.path) {
+								client.logger.Debug("cancelling upload. Modified path", modifiedPath)
+								command.Cancel()
+								queue.Rollback()
+								break uploading
 							}
-						case <-commandDone:
-							return
 						}
-					}
-				}()
-				goroutineStarted.Wait()
-				err := command.Result()
-				modifiedPaths.Off()
-				close(commandDone)
-				if err == nil {
-					client.logger.Debug("success")
-					queue.Commit()
-				} else {
-					if err.Error() != "signal: terminated" { // MAYBE: something smarter
-						client.logger.Debug("fail")
-						client.logger.Error(err.Error())
-					}
-					queue.Rollback()
+					case result := <-command.ResultChan:
+						if result == nil {
+							client.logger.Debug("success")
+							queue.Commit()
+						} else {
+							client.logger.Debug("fail")
+							client.logger.Error(result.Error())
+							queue.Rollback()
+						}
+						break uploading
 				}
-
-				continue main
 			}
-			queue.Commit()
-			break
+			modifiedPaths.Off()
+
+			continue
 		}
+		queue.Commit()
+
 		break
 	}
 }

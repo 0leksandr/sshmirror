@@ -20,6 +20,7 @@ import (
 // TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
 // TODO: test tabs, zero-symbols and others in filenames
 // TODO: test files and directories with same name
+// TODO: test moving a/b/c > a/d > a/b/c/e, a/b/c > a/b > a/b
 // MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
 // MAYBE: test tricky filenames: `--`, `.`, `..`, `*`, `:`, `\r`
 // MAYBE: test ignored
@@ -153,6 +154,68 @@ func (chain TestModificationChain) scenarios() []TestScenario {
 	}
 	return scenarios
 }
+
+//type LocalDelayClient struct {
+//	RemoteClient
+//	delay     time.Duration
+//	dirFrom   Filename
+//	dirTo     Filename
+//	commander RemoteCommander
+//	locker    *Locker
+//}
+//func (LocalDelayClient) New(
+//	delay time.Duration,
+//	dirFrom Filename,
+//	dirTo Filename,
+//	commander RemoteCommander,
+//) LocalDelayClient {
+//	return LocalDelayClient{
+//		delay:     delay,
+//		dirFrom:   dirFrom,
+//		dirTo:     dirTo,
+//		commander: commander,
+//		locker:    &Locker{},
+//	}
+//}
+//func (client LocalDelayClient) Close() error {
+//	return nil
+//}
+//func (client LocalDelayClient) Update(updated []Updated) CancellableContext {
+//	cmds := make([]string, 0, len(updated))
+//	for _, _updated := range updated {
+//		path := string(os.PathSeparator) + _updated.path.original.Escaped()
+//		cmds = append(cmds, fmt.Sprintf(
+//			"cp -r %s %s",
+//			client.dirFrom.Escaped() + path,
+//			client.dirTo.Escaped() + path,
+//		))
+//	}
+//	client.run(cmds)
+//	return CancellableContext{
+//		Result: func() error { return nil },
+//		Cancel: func() { panic("cannot cancel") },
+//	}
+//}
+//func (client LocalDelayClient) InPlace(inPlace []InPlaceModification) error {
+//	cmds := make([]string, 0, len(inPlace))
+//	for _, modification := range inPlace {
+//		cmds = append(cmds, modification.Command(client.commander))
+//	}
+//	client.run(cmds)
+//	return nil
+//}
+//func (client LocalDelayClient) Ready() *Locker {
+//	return client.locker
+//}
+//func (client LocalDelayClient) run(cmds []string) {
+//	time.Sleep(client.delay)
+//	my.RunCommand(
+//		"",
+//		strings.Join(cmds, " && "),
+//		nil,
+//		func(err string) { panic(err) },
+//	)
+//}
 
 var fileIndex = 0
 func generateFilenamePart() Filename {
@@ -681,7 +744,7 @@ func TestIntegration(t *testing.T) {
 	go func() {
 		my.RunCommand(
 			currentDir,
-			fmt.Sprintf("%s -M %s -t 'echo done && sleep 300'", sshCmd, testConfig.RemoteAddress),
+			fmt.Sprintf("%s -M %s -t 'echo done && sleep 420'", sshCmd, testConfig.RemoteAddress),
 			func(string) { masterConnectionReady.Done() },
 			nil,
 		)

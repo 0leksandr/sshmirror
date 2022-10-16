@@ -27,26 +27,16 @@ type Moved struct { // existing file, that was moved to a new location
 	from Path
 	to   Path
 }
-func (updated Updated) Join(queue *ModificationsQueue) error {
-	queue.fs.Update(updated.filename)
-	return nil
+func (updated Updated) Join(queue *ModificationsQueue) {
+	queue.fs.Update(updated.path)
 }
-func (deleted Deleted) Join(queue *ModificationsQueue) error {
-	queue.fs.Delete(Pathname{
-		Filename: deleted.filename,
-		IsDir:    false,
-	})
-	return nil
+func (deleted Deleted) Join(queue *ModificationsQueue) {
+	queue.fs.Delete(deleted.path)
+	queue.inPlace = append(queue.inPlace, deleted)
 }
-func (moved Moved) Join(queue *ModificationsQueue) error {
-	queue.fs.Move(
-		Pathname{
-			Filename: moved.from,
-			IsDir:    false,
-		},
-		moved.to,
-	)
-	return nil
+func (moved Moved) Join(queue *ModificationsQueue) {
+	queue.fs.Move(moved.from, moved.to.original)
+	queue.inPlace = append(queue.inPlace, moved)
 }
 func (updated Updated) AffectedPaths() []Path {
 	return []Path{updated.path}
@@ -99,13 +89,15 @@ func (moved Moved) Equals(other InPlaceModification) bool {
 }
 
 type ModificationsQueue struct {
-	fs    *ModFS
-	mutex sync.Mutex
+	fs      *ModFS
+	mutex   sync.Mutex
+	inPlace []InPlaceModification
 }
 //goland:noinspection GoVetCopyLock
 func (ModificationsQueue) New() *ModificationsQueue {
 	return &ModificationsQueue{
-		fs: ModFS{}.New(),
+		fs:      ModFS{}.New(),
+		inPlace: make([]InPlaceModification, 0),
 	}
 }
 func (queue *ModificationsQueue) AtomicAdd(modification Modification) {
@@ -116,25 +108,42 @@ func (queue *ModificationsQueue) AtomicAdd(modification Modification) {
 func (queue *ModificationsQueue) Add(modification Modification) {
 	modification.Join(queue)
 }
-func (queue *ModificationsQueue) HasModifications(filename Filename) bool {
-	return queue.fs.changes.Has(queue.fs.getFile(filename))
-}
 func (queue *ModificationsQueue) IsEmpty() bool {
 	queue.mutex.Lock()
 	defer queue.mutex.Unlock()
 
-	return queue.fs.changes.Len() == 0
+	return len(queue.inPlace) == 0 && len(queue.fs.FetchUpdated(false)) == 0
 }
 func (queue *ModificationsQueue) Copy() *ModificationsQueue {
 	return &ModificationsQueue{
-		fs: queue.fs.Copy(),
+		fs:      queue.fs.Copy(),
+		inPlace: queue.copyInPlace(),
 	}
+}
+func (queue *ModificationsQueue) GetInPlace(flush bool) []InPlaceModification {
+	inPlace := queue.copyInPlace()
+	if flush { queue.inPlace = make([]InPlaceModification, 0) }
+	return inPlace
+}
+func (queue *ModificationsQueue) GetUpdated(flush bool) []Updated {
+	return queue.fs.FetchUpdated(flush)
+}
+func (queue *ModificationsQueue) copyInPlace() []InPlaceModification {
+	inPlace := make([]InPlaceModification, len(queue.inPlace))
+	copy(inPlace, queue.inPlace)
+	return inPlace
 }
 
 type TransactionalQueue struct { // TODO: rename
 	ModificationsQueue
 	backup *ModificationsQueue
 	mutex  sync.Mutex
+}
+//goland:noinspection GoVetCopyLock
+func (TransactionalQueue) New() *TransactionalQueue {
+	return &TransactionalQueue{
+		ModificationsQueue: *ModificationsQueue{}.New(),
+	}
 }
 func (queue *TransactionalQueue) Begin() {
 	queue.mutex.Lock()
@@ -159,14 +168,17 @@ func (queue *TransactionalQueue) IsEmpty() bool {
 }
 func (queue *TransactionalQueue) AtomicAdd(modification Modification) {
 	queue.mutex.Lock()
-	for _, _queue := range queue.queues() { _queue.AtomicAdd(modification) }
-	queue.mutex.Unlock()
+	defer queue.mutex.Unlock()
+
+	queue.ModificationsQueue.AtomicAdd(modification)
+	if queue.backup != nil { queue.backup.AtomicAdd(modification) }
+}
+func (queue *TransactionalQueue) GetInPlace(flush bool) []InPlaceModification {
+	return queue.ModificationsQueue.GetInPlace(flush)
+}
+func (queue *TransactionalQueue) GetUpdated(flush bool) []Updated {
+	return queue.ModificationsQueue.GetUpdated(flush)
 }
 func (queue *TransactionalQueue) mustNotHaveStarted() {
 	if queue.backup != nil { panic("transaction is active") }
-}
-func (queue *TransactionalQueue) queues() []*ModificationsQueue {
-	queues := []*ModificationsQueue{&queue.ModificationsQueue}
-	if queue.backup != nil { queues = append(queues, queue.backup) }
-	return queues
 }
