@@ -544,43 +544,43 @@ func basicModificationChains() []TestModificationChain {
 			}
 		})(generateFilename(), generateFilename(), generateFilename()),
 
-		//(func() TestModificationChain { // TODO: uncomment when fixed
-		//	generateFilenames := func(length int) []Filename {
-		//		filenames := make([]Filename, 0, length)
-		//		for i := 0; i < length; i++ {
-		//			filenames = append(filenames, generateFilename(generateFilenamePart()))
-		//		}
-		//		return filenames
-		//	}
-		//
-		//	nrFilesAfter := 10
-		//	modifications := make([]TestModificationInterface, 0, nrFilesAfter)
-		//	for i := 0; i < nrFilesAfter; i++ {
-		//		modifications = append(
-		//			modifications,
-		//			TestSimpleModification{write(generateFilename(generateFilenamePart()))},
-		//		)
-		//	}
-		//
-		//	return TestModificationChain{
-		//		files: generateFilenames(100),
-		//		dirs:  generateFilenames(100),
-		//		after: modifications,
-		//	}
-		//})(),
-		//(func() TestModificationChain {
-		//	nrCases := 100
-		//	commands := make([]string, 0, nrCases)
-		//	for i := 0; i < nrCases; i++ {
-		//		commands = append(commands, write(generateFilename(generateFilenamePart())))
-		//		commands = append(commands, mkdir(generateFilename(generateFilenamePart())))
-		//	}
-		//	return TestModificationChain{
-		//		after: TestModificationsList{
-		//			TestSimpleModification{strings.Join(commands, ";")},
-		//		},
-		//	}
-		//})(),
+		(func() TestModificationChain { // TODO: uncomment when fixed
+			generateFilenames := func(length int) []Filename {
+				filenames := make([]Filename, 0, length)
+				for i := 0; i < length; i++ {
+					filenames = append(filenames, generateFilename(generateFilenamePart()))
+				}
+				return filenames
+			}
+
+			nrFilesAfter := 10
+			modifications := make([]TestModificationInterface, 0, nrFilesAfter)
+			for i := 0; i < nrFilesAfter; i++ {
+				modifications = append(
+					modifications,
+					TestSimpleModification{write(generateFilename(generateFilenamePart()))},
+				)
+			}
+
+			return TestModificationChain{
+				files: generateFilenames(100),
+				dirs:  generateFilenames(100),
+				after: modifications,
+			}
+		})(),
+		(func() TestModificationChain {
+			nrCases := 100
+			commands := make([]string, 0, nrCases)
+			for i := 0; i < nrCases; i++ {
+				commands = append(commands, write(generateFilename(generateFilenamePart())))
+				commands = append(commands, mkdir(generateFilename(generateFilenamePart())))
+			}
+			return TestModificationChain{
+				after: TestModificationsList{
+					TestSimpleModification{strings.Join(commands, ";")},
+				},
+			}
+		})(),
 	}
 }
 func filenameModificationChains() []TestModificationChain {
@@ -888,6 +888,7 @@ func TestIntegration(t *testing.T) {
 					time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second)
 				} else {
 					logger.Debug("awaiting sync", my.Trace{}.New().Local())
+					time.Sleep(500 * time.Millisecond)
 					synced := *cancellableTimer(
 						time.Duration(testConfig.TimeoutSeconds) * time.Second,
 						func() {
