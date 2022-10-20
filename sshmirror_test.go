@@ -20,7 +20,6 @@ import (
 // TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
 // TODO: test tabs, zero-symbols and others in filenames
 // TODO: test files and directories with same name
-// TODO: test moving a/b/c > a/d > a/b/c/e, a/b/c > a/b > a/b
 // MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
 // MAYBE: test tricky filenames: `--`, `.`, `..`, `*`, `:`, `\r`
 // MAYBE: test ignored
@@ -543,6 +542,22 @@ func basicModificationChains() []TestModificationChain {
 				},
 			}
 		})(generateFilename(), generateFilename(), generateFilename()),
+		{
+			files: []Filename{TargetDir + "/a/b/c/d"},
+			after: TestModificationsList{
+				TestSimpleModification{move(TargetDir + "/a/b/c", TargetDir + "/a/e")},
+				TestSimpleModification{
+					"mkdir -p " + TargetDir + "/a/b/c && mv " + TargetDir + "/a/e " + TargetDir + "/a/b/c/f",
+				},
+			},
+		},
+		{
+			files: []Filename{TargetDir + "/a/b/c/d"},
+			after: TestModificationsList{
+				TestSimpleModification{move(TargetDir + "/a/b/c", TargetDir + "/a/e")},
+				TestSimpleModification{move(TargetDir + "/a/e", TargetDir + "/a/b")},
+			},
+		},
 
 		(func() TestModificationChain { // TODO: uncomment when fixed
 			generateFilenames := func(length int) []Filename {
