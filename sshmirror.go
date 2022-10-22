@@ -424,7 +424,7 @@ type SSHMirror struct {
 	watcher Watcher
 	remote  RemoteManager
 	logger  Logger
-	onReady func() // only for test
+	syncing *Locker // only for test
 }
 func (SSHMirror) New(config Config) *SSHMirror {
 	logger := config.logger
@@ -458,7 +458,7 @@ func (SSHMirror) New(config Config) *SSHMirror {
 		watcher: watcher,
 		remote:  RemoteManager{}.New(config),
 		logger:  logger,
-		onReady: func() {},
+		syncing: &Locker{},
 	}
 }
 func (client *SSHMirror) Close() error {
@@ -573,7 +573,7 @@ func (client *SSHMirror) Run() {
 
 		if queue.IsEmpty() { // during upload, multiple syncs were produces, first sync synchronized everything
 			client.logger.Debug("queue empty")
-			client.onReady() // for "empty" move - when file was moved outside and then into same location
+			client.syncing.Unlock() // for "empty" move - when file was moved outside and then into same location
 			return
 		}
 
@@ -581,11 +581,12 @@ func (client *SSHMirror) Run() {
 
 		client.logger.Debug("queue after sync", queue)
 
-		if queue.IsEmpty() { client.onReady() }
+		if queue.IsEmpty() { client.syncing.Unlock() }
 	}
 
 	modificationReceived := func(modification Modification) {
 		client.logger.Debug("modification received", modification)
+		client.syncing.Lock()
 		queue.AtomicAdd(modification)
 		if cancelFirst == nil { cancelFirst = cancellableTimer(5 * time.Second, doSync) }
 		if cancelLast != nil { (*cancelLast)() }

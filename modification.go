@@ -35,6 +35,16 @@ func (deleted Deleted) Join(queue *ModificationsQueue) {
 	queue.inPlace = append(queue.inPlace, deleted)
 }
 func (moved Moved) Join(queue *ModificationsQueue) {
+	if moved.from.Equals(moved.to) {
+		Updated{moved.from}.Join(queue)
+		return
+	}
+	if moved.from.Relates(moved.to) { // MAYBE: test
+		Deleted{moved.from}.Join(queue)
+		Updated{moved.to}.Join(queue)
+		return
+	}
+
 	queue.fs.Move(moved.from, moved.to.original)
 	queue.inPlace = append(queue.inPlace, moved)
 }

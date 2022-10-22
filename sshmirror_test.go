@@ -559,7 +559,7 @@ func basicModificationChains() []TestModificationChain {
 			},
 		},
 
-		(func() TestModificationChain { // TODO: uncomment when fixed
+		(func() TestModificationChain {
 			generateFilenames := func(length int) []Filename {
 				filenames := make([]Filename, 0, length)
 				for i := 0; i < length; i++ {
@@ -860,7 +860,7 @@ func TestIntegration(t *testing.T) {
 
 			logger := loggers[processId - 1]
 
-			var syncing Locker
+			var syncing *Locker // MAYBE: only for non-IntegrationTest
 			SUTsDone.Add(1)
 			if testConfig.IntegrationTest {
 				command := exec.Command(
@@ -886,10 +886,7 @@ func TestIntegration(t *testing.T) {
 					connTimeout:  testConfig.TimeoutSeconds,
 					logger:       *logger,
 				})
-				client.onReady = func() {
-					logger.Debug("client.onReady")
-					syncing.Unlock()
-				}
+				syncing = client.syncing
 				go client.Run()
 				defer func() {
 					Must(client.Close())
@@ -903,7 +900,7 @@ func TestIntegration(t *testing.T) {
 					time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second)
 				} else {
 					logger.Debug("awaiting sync", my.Trace{}.New().Local())
-					time.Sleep(500 * time.Millisecond)
+					time.Sleep(700 * time.Millisecond)
 					synced := *cancellableTimer(
 						time.Duration(testConfig.TimeoutSeconds) * time.Second,
 						func() {
@@ -914,6 +911,7 @@ func TestIntegration(t *testing.T) {
 						},
 					)
 					syncing.Wait()
+					logger.Debug("awaitSync done")
 					synced()
 				}
 			}
