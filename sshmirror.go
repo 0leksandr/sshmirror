@@ -115,7 +115,7 @@ type CancellableContext struct { // MAYBE: rename
 	ResultChan <-chan error // TODO: remove/handle
 }
 
-type SwitchChannelPaths struct {
+type SwitchChannelPaths struct { // MAYBE: atomic
 	on bool
 	ch chan Path
 }
@@ -611,10 +611,11 @@ func (client *SSHMirror) Run() {
 	}
 }
 func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedPaths *SwitchChannelPaths) { // THINK: limit of tries
-	client.logger.Debug("sync.queue", queue)
+	client.logger.Debug("sync")
 
 	for {
 		client.logger.Debug("sync cycle")
+		client.logger.Debug("queue", queue)
 
 		queue.Begin()
 		if inPlace := queue.GetInPlace(true); len(inPlace) > 0 {

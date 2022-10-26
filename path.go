@@ -61,6 +61,12 @@ func (path *Path) Move(from, to Path) error {
 		return errors.New("cannot move")
 	}
 }
+func (path Path) String() string {
+	str := "Path{" + string(path.original)
+	if path.isDir { str += "/" }
+	str += "}"
+	return str
+}
 func (Path) startsWith(big, small []string) bool {
 	if len(big) < len(small) { return false }
 	for i, partSmall := range small {

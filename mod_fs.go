@@ -227,3 +227,19 @@ func (modFS *ModFS) nodeExists(path Path) bool { // TODO: test
 		return hasFile
 	}
 }
+func (modFS *ModFS) String() string { // MAYBE: make it normal
+	s := "."
+	modFS.root.Walk(func(node Node) {
+		switch node.(type) {
+			case *File: s+= "\n" + string(node.(*File).Filename())
+			case *Dir:
+				dir := node.(*Dir)
+				if len(dir.files) == 0 || len(dir.dirs) == 0 {
+					s+= "\n" + string(dir.Filename()) + "/"
+				}
+			default: panic("unknown node")
+		}
+		if node.Updated() { s += " <" }
+	})
+	return s
+}

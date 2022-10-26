@@ -169,6 +169,9 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return watcher, err }
 	}
 
+	const UpdatedMergeTimeout = 5 * time.Millisecond
+
+	const CreateStr     = "CREATE"
 	const CloseWriteStr = "CLOSE_WRITE"
 	const DeleteStr     = "DELETE"
 	const MovedFromStr  = "MOVED_FROM"
@@ -178,7 +181,8 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 
 	type EventType uint8
 	const (
-		CloseWriteCode EventType = 1 << iota
+		CreateCode EventType = 1 << iota
+		CloseWriteCode
 		DeleteCode
 		MovedFromCode
 		MovedToCode
@@ -192,11 +196,13 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	args := []string{
 		"--monitor",
 		"--recursive",
+		"--quiet",
 		"--format", strings.Join([]string{
 			"%w%f",
 			Delimiter,
 			"%e",
 		}, ""),
+		"--event", CreateStr,
 		"--event", CloseWriteStr,
 		"--event", DeleteStr,
 		"--event", MovedFromStr,
@@ -230,6 +236,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		str  string
 		code EventType
 	}{
+		{CreateStr,     CreateCode    },
 		{CloseWriteStr, CloseWriteCode},
 		{DeleteStr,     DeleteCode    },
 		{MovedFromStr,  MovedFromCode },
@@ -280,13 +287,27 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		close(events)
 	}()
 
-	put := func(modification Modification) { watcher.modifications <- modification }
+	var lastUpdatedPath Path
+	var lastUpdatedTime time.Time
+	put := func(modification Modification) {
+		if updated, ok := modification.(Updated); ok { // MAYBE: refactor
+			if updated.path.Equals(lastUpdatedPath) && (time.Now().Sub(lastUpdatedTime) < UpdatedMergeTimeout) {
+				return
+			} else {
+				lastUpdatedPath = updated.path
+				lastUpdatedTime = time.Now()
+			}
+		}
+		watcher.modifications <- modification
+	}
+
 	var processEvent func(Event)
 	processEvent = func(event Event) {
 		path := event.path
 		switch event.eventType {
+			case CreateCode:     put(Updated{path})
 			case CloseWriteCode: put(Updated{path})
-			case DeleteCode: put(Deleted{path})
+			case DeleteCode:     put(Deleted{path})
 			case MovedFromCode:
 				putDefault := func() { put(Deleted{path}) }
 				select {
@@ -310,6 +331,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 					// MAYBE: listen for exit
 				}
 			case MovedToCode: put(Updated{path})
+			default: panic("unknown event type")
 		}
 	}
 	go func() { // events to modifications
@@ -319,9 +341,13 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	}()
 
 	errCommandStart := command.Start()
+	// MAYBE: await for "Watches established" (remove `--quiet`)
 	watcher.onClose = func() error {
 		return command.Process.Signal(syscall.SIGTERM)
 	}
+	go func() {
+		_ = command.Wait() // TODO: restart?
+	}()
 
 	// TODO: read error/info stream, await for watches to establish
 	return watcher, errCommandStart

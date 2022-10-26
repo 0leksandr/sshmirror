@@ -38,18 +38,22 @@ func TestWatchers(t *testing.T) {
 					func(err string) { panic(err) },
 				)
 			}
-			assertModification := func(command string, expected Modification) {
+			assertModification := func(command string, expected ...Modification) {
 				runCommand(command)
 
-				select {
-					case modification := <-watcher.Modifications():
-						my.AssertEquals(t, modification, expected, watcher, command, modification)
-					case <-time.After(10 * time.Millisecond):
-						my.Assert(t, expected == nil, watcher, command)
+				var modifications []Modification
+				readModifications: for {
+					select {
+						case modification := <-watcher.Modifications():
+							modifications = append(modifications, modification)
+						case <-time.After(10 * time.Millisecond):
+							break readModifications
+					}
 				}
+				my.AssertEquals(t, modifications, expected, watcher, command, my.GetTrace(false))
 			}
 
-			assertModification(mkdir("aaa"), nil)
+			assertModification(mkdir("aaa"), Updated{Path{}.New("aaa", true)})
 
 			for _, filename := range []Filename{
 				"a", // MAYBE: use `generateFilenamePart`

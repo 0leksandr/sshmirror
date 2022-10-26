@@ -542,22 +542,24 @@ func basicModificationChains() []TestModificationChain {
 				},
 			}
 		})(generateFilename(), generateFilename(), generateFilename()),
-		{
-			files: []Filename{TargetDir + "/a/b/c/d"},
-			after: TestModificationsList{
-				TestSimpleModification{move(TargetDir + "/a/b/c", TargetDir + "/a/e")},
-				TestSimpleModification{
-					"mkdir -p " + TargetDir + "/a/b/c && mv " + TargetDir + "/a/e " + TargetDir + "/a/b/c/f",
+		(func(root Filename) TestModificationChain {
+			return TestModificationChain{
+				files: []Filename{root + "/a/b/c"},
+				after: TestModificationsList{
+					TestSimpleModification{move(root + "/a", root + "/d")},
+					TestSimpleModification{mkdir(root + "/a/b") + " && " + move(root + "/d", root + "/a/b/e")},
 				},
-			},
-		},
-		{
-			files: []Filename{TargetDir + "/a/b/c/d"},
-			after: TestModificationsList{
-				TestSimpleModification{move(TargetDir + "/a/b/c", TargetDir + "/a/e")},
-				TestSimpleModification{move(TargetDir + "/a/e", TargetDir + "/a/b")},
-			},
-		},
+			}
+		})(generateFilename()),
+		(func(root Filename) TestModificationChain {
+			return TestModificationChain{
+				files: []Filename{root + "/a/b/c"},
+				after: TestModificationsList{
+					TestSimpleModification{move(root + "/a/b", root + "/d")},
+					TestSimpleModification{move(root + "/d", root + "/a")},
+				},
+			}
+		})(generateFilename()),
 
 		(func() TestModificationChain {
 			generateFilenames := func(length int) []Filename {
@@ -826,10 +828,19 @@ func TestIntegration(t *testing.T) {
 	}
 	close(scenarios)
 
+	singleThread := testConfig.NrThreads == 1
+
 	loggers := make([]*Logger, 0, testConfig.NrThreads)
 	for i := 0; i < testConfig.NrThreads; i++ {
+		var debugLogger DebugLogger
+		if singleThread {
+			debugLogger = StdOutLogger{LogFormatter{true}}
+		} else {
+			debugLogger = &InMemoryDebugLogger{formatter: LogFormatter{timestamps: true}}
+		}
+
 		loggers = append(loggers, &Logger{
-			debug: &InMemoryDebugLogger{formatter: LogFormatter{timestamps: true}},
+			debug: debugLogger,
 			error: (func() ErrorLogger {
 				if testConfig.ErrorCmd != "" {
 					return ComboErrorLogger{[]ErrorLogger{
@@ -906,7 +917,9 @@ func TestIntegration(t *testing.T) {
 						func() {
 							my.Dump("stuck logs:")
 							logger.Debug("")
-							logger.debug.(*InMemoryDebugLogger).collector.Print()
+							if !singleThread {
+								logger.debug.(*InMemoryDebugLogger).collector.Print()
+							}
 							panic("test failed")
 						},
 					)
@@ -1010,6 +1023,8 @@ func TestIntegration(t *testing.T) {
 				for _, dirname := range scenario.dirs {
 					logger.Debug("dir.before", dirname)
 
+					if !testConfig.IntegrationTest { syncing.Lock() }
+
 					my.RunCommand(
 						localSandbox,
 						mkdir(dirname),
@@ -1050,7 +1065,7 @@ func TestIntegration(t *testing.T) {
 				check()
 				reset(remoteSandbox, localSandbox, false)
 				time.Sleep(time.Duration(testConfig.TimeoutSeconds) * time.Second) // TODO: make it normal
-				logger.debug.(*InMemoryDebugLogger).collector.Clear()
+				if !singleThread { logger.debug.(*InMemoryDebugLogger).collector.Clear() }
 			}
 
 			wg.Done()
