@@ -11,6 +11,7 @@ type Node interface {
 	Walk(func(Node))
 	Suicide() // MAYBE: rename
 	Updated() bool
+	UpdatedRoot() bool // MAYBE: rename
 	SetUpdated(bool)
 }
 type File struct {
@@ -41,10 +42,14 @@ func (file *File) Suicide() {
 	}
 }
 func (file *File) Updated() bool {
+	if file.parent != nil && file.parent.Updated() { return true }
 	return file.updated
 }
+func (file *File) UpdatedRoot() bool {
+	return file.updated // MAYBE: separate type for updated (without this field)
+}
 func (file *File) SetUpdated(updated bool) {
-	file.updated = updated
+	if !file.Updated() { file.updated = updated }
 }
 func (file *File) Copy(parent *Dir) *File {
 	return &File{
@@ -129,12 +134,15 @@ func (dir *Dir) GetParent() *Dir {
 func (dir *Dir) Updated() bool {
 	return dir.File.Updated()
 }
+func (dir *Dir) UpdatedRoot() bool {
+	return dir.File.UpdatedRoot()
+}
 func (dir *Dir) SetUpdated(updated bool) {
 	dir.File.SetUpdated(updated)
 }
 
 type ModFS struct {
-	root *Dir
+	root *Dir // MAYBE: separate type for root
 }
 func (ModFS) New() *ModFS {
 	return &ModFS{
@@ -172,7 +180,7 @@ func (modFS *ModFS) FetchUpdated(flush bool) []Updated {
 	updated := make([]Updated, 0)
 
 	modFS.root.Walk(func(node Node) {
-		if node.Updated() {
+		if node.UpdatedRoot() {
 			updated = append(updated, Updated{node.Path()})
 		}
 	})

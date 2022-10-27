@@ -277,10 +277,7 @@ var contentIndex = 0
 func write(filename Filename) string {
 	var _mkdir string
 	dir := Path{}.New(filename, false).Parent()
-	if len(dir.parts) > 0 {
-		_mkdir = mkdir(dir.original) + " && " +
-			"sleep 0.05 && " // PRIORITY: remove after new subdirectories are being scanned
-	}
+	if len(dir.parts) > 0 { _mkdir = mkdir(dir.original) + " && " }
 	contentIndex++
 	return _mkdir + fmt.Sprintf("echo %d > %s", contentIndex, filename.Escaped())
 }

@@ -231,7 +231,7 @@ func (RemoteManager) New(config Config) RemoteManager {
 		localDir:     config.localDir,
 	}
 }
-func (manager RemoteManager) Update(updated []Updated) CancellableContext { // PRIORITY: merge children/parents
+func (manager RemoteManager) Update(updated []Updated) CancellableContext {
 	updatedFilenames := make([]Filename, 0, len(updated))
 	for _, _updated := range updated { updatedFilenames = append(updatedFilenames, _updated.path.original) }
 	cmdContext := manager.RemoteClient.Update(updated)
