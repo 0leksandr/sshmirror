@@ -161,12 +161,12 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	}
 
 	nrFiles, errCalculateFiles := watcher.getNrFiles(root)
-	if errCalculateFiles != nil { return watcher, errCalculateFiles }
+	if errCalculateFiles != nil { return nil, errCalculateFiles }
 	maxUserWatchers, errMaxUserWatchers := watcher.getMaxUserWatchers()
-	if errMaxUserWatchers != nil { return watcher, errMaxUserWatchers }
+	if errMaxUserWatchers != nil { return nil, errMaxUserWatchers }
 	requiredNrWatchers := watcher.getRequiredNrWatchers(nrFiles)
 	if requiredNrWatchers > maxUserWatchers { // THINK: https://www.baeldung.com/linux/inotify-upper-limit-reached
-		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return watcher, err }
+		if err := watcher.setMaxUserWatchers(requiredNrWatchers); err != nil { return nil, err }
 	}
 
 	const UpdatedMergeTimeout = 5 * time.Millisecond
@@ -340,17 +340,19 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		return
 	}()
 
-	errCommandStart := command.Start()
-	// MAYBE: await for "Watches established" (remove `--quiet`)
-	watcher.onClose = func() error {
-		return command.Process.Signal(syscall.SIGTERM)
+	if errCommandStart := command.Start(); errCommandStart != nil {
+		return nil, errCommandStart
 	}
-	go func() {
-		_ = command.Wait() // TODO: restart?
-	}()
+	watcher.onClose = func() error {
+		return command.Process.Signal(syscall.SIGTERM) // MAYBE: `SIGKILL`
+	}
 
-	// TODO: read error/info stream, await for watches to establish
-	return watcher, errCommandStart
+	// TODO: read error/info stream, await for "Watches established" (remove `--quiet`)
+	//go func() {
+	//	_ = command.Wait() // THINK: restart?
+	//}()
+
+	return watcher, nil
 }
 func (InotifyWatcher) Name() string {
 	return "inotify"

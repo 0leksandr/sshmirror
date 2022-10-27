@@ -441,7 +441,6 @@ func (SSHMirror) New(config Config) *SSHMirror {
 				if inotify, err := (InotifyWatcher{}.New(config.localDir, config.exclude, logger)); err == nil {
 					return inotify
 				} else {
-					Must(inotify.Close())
 					logger.Error(err.Error())
 					logger.Error(
 						"Warning! Current FS events provider: fsnotify. It has known problem of not tracking " +
