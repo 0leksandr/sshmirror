@@ -557,6 +557,26 @@ func basicModificationChains() []TestModificationChain {
 				},
 			}
 		})(generateFilename()),
+		(func(root Filename) TestModificationChain {
+			return TestModificationChain{
+				files: []Filename{
+					root + "/../a/file1",
+					root + "/b/file2",
+				},
+				after: TestModificationsList{
+					TestSimpleModification{
+						strings.Join(
+							[]string{
+								move(root + "/../a", root + "/a"),
+								move(root + "/b", root + "/a/b"),
+								move(root + "/a/file1", root + "/file1"),
+							},
+							" && ",
+						),
+					},
+				},
+			}
+		})(generateFilename()),
 
 		(func() TestModificationChain {
 			generateFilenames := func(length int) []Filename {

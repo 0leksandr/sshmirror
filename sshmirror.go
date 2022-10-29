@@ -22,9 +22,7 @@ import (
 // TODO: timeout sync operations
 // TODO: re-sync with timeout on error
 // TODO: ignore special types of files (pipes, block devices etc.)
-// TODO: support directories
 // TODO: support scp without rsync
-// TODO: scan contents of new subdirectories: https://stackoverflow.com/a/17586891
 // MAYBE: support symlinks
 // MAYBE: automatically adjust timeout based on server response rate
 // MAYBE: copy permissions
