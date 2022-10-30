@@ -11,8 +11,8 @@ type Node interface {
 	Walk(func(Node))
 	Suicide() // MAYBE: rename
 	Updated() bool
-	UpdatedRoot() bool // MAYBE: rename
-	SetUpdated(bool)
+	UpdatedRoot() bool
+	SetUpdated()
 }
 type File struct {
 	Node
@@ -46,10 +46,11 @@ func (file *File) Updated() bool {
 	return file.updated
 }
 func (file *File) UpdatedRoot() bool {
-	return file.updated // MAYBE: separate type for updated (without this field)
+	if file.parent != nil && file.parent.Updated() { return false }
+	return file.updated
 }
-func (file *File) SetUpdated(updated bool) {
-	if !file.Updated() { file.updated = updated }
+func (file *File) SetUpdated() {
+	file.updated = true
 }
 func (file *File) Copy(parent *Dir) *File {
 	return &File{
@@ -137,8 +138,8 @@ func (dir *Dir) Updated() bool {
 func (dir *Dir) UpdatedRoot() bool {
 	return dir.File.UpdatedRoot()
 }
-func (dir *Dir) SetUpdated(updated bool) {
-	dir.File.SetUpdated(updated)
+func (dir *Dir) SetUpdated() {
+	dir.File.SetUpdated()
 }
 
 type ModFS struct {
@@ -150,7 +151,7 @@ func (ModFS) New() *ModFS {
 	}
 }
 func (modFS *ModFS) Update(path Path) {
-	modFS.getNode(path).SetUpdated(true)
+	modFS.getNode(path).SetUpdated()
 }
 func (modFS *ModFS) Delete(path Path) {
 	if modFS.nodeExists(path) {
@@ -160,6 +161,8 @@ func (modFS *ModFS) Delete(path Path) {
 func (modFS *ModFS) Move(from Path, to Filename) { // MAYBE: refactor
 	pathTo   := Path{}.New(to, from.isDir)
 	toParent := modFS.getDir(pathTo.Parent())
+	nodeFrom := modFS.getNode(from)
+	if nodeFrom.Updated() { nodeFrom.SetUpdated() }
 	if from.isDir {
 		dirFrom := modFS.getDir(from)
 		nameTo := modFS.getDir(pathTo).name

@@ -559,6 +559,17 @@ func basicModificationChains() []TestModificationChain {
 		})(generateFilename()),
 		(func(root Filename) TestModificationChain {
 			return TestModificationChain{
+				files: []Filename{root + "/a/b/c"},
+				after: TestModificationsList{
+					TestSimpleModification{move(root + "/a", root + "/d")},
+					TestSimpleModification{mkdir(root + "/a/b") + " && " + move(root + "/d", root + "/a/b/e")},
+					TestSimpleModification{move(root + "/a/b", root + "/d")},
+					TestSimpleModification{move(root + "/d", root + "/a")},
+				},
+			}
+		})(generateFilename()),
+		(func(root Filename) TestModificationChain {
+			return TestModificationChain{
 				files: []Filename{
 					root + "/../a/file1",
 					root + "/b/file2",

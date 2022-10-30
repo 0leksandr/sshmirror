@@ -128,7 +128,12 @@ func (c *SwitchChannelPaths) On() {
 }
 func (c *SwitchChannelPaths) Off() {
 	c.on = false
-	for len(c.ch) > 0 { <-c.ch }
+	for {
+		select {
+			case _, ok := <-c.ch: if !ok { return }
+			default: return
+		}
+	}
 }
 func (c *SwitchChannelPaths) Put(path Path) {
 	if c.on { c.ch <- path }

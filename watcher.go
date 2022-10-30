@@ -170,6 +170,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	}
 
 	const UpdatedMergeTimeout = 5 * time.Millisecond
+	const MvTimeout = 2 * time.Millisecond // MAYBE: tweak
 
 	const CreateStr     = "CREATE"
 	const CloseWriteStr = "CLOSE_WRITE"
@@ -326,7 +327,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 						} else {
 							putDefault()
 						}
-					case <-time.After(2 * time.Millisecond): // MAYBE: tweak
+					case <-time.After(MvTimeout):
 						putDefault()
 					// MAYBE: listen for exit
 				}
