@@ -568,26 +568,26 @@ func basicModificationChains() []TestModificationChain {
 				},
 			}
 		})(generateFilename()),
-		(func(root Filename) TestModificationChain {
+		(func(aDirExt, bDir Filename) TestModificationChain {
 			return TestModificationChain{
 				files: []Filename{
-					root + "/../a/file1",
-					root + "/b/file2",
+					aDirExt + "/file1",
+					bDir + "/b/file2",
 				},
 				after: TestModificationsList{
 					TestSimpleModification{
 						strings.Join(
 							[]string{
-								move(root + "/../a", root + "/a"),
-								move(root + "/b", root + "/a/b"),
-								move(root + "/a/file1", root + "/file1"),
+								move(aDirExt, bDir+ "/a"),
+								move(bDir+ "/b", bDir+ "/a/b"),
+								move(bDir+ "/a/file1", bDir+ "/file1"),
 							},
 							" && ",
 						),
 					},
 				},
 			}
-		})(generateFilename()),
+		})(generateFilename(".."), generateFilename()),
 		(func(aDir, bExtDir, cExtFile, dFile Filename) TestModificationChain {
 			return TestModificationChain{
 				files: []Filename{cExtFile},
