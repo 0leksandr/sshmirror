@@ -588,6 +588,24 @@ func basicModificationChains() []TestModificationChain {
 				},
 			}
 		})(generateFilename()),
+		(func(aDir, bExtDir, cExtFile, dFile Filename) TestModificationChain {
+			return TestModificationChain{
+				files: []Filename{cExtFile},
+				dirs: []Filename{aDir},
+				after: TestModificationsList{
+					TestSimpleModification{move(aDir, bExtDir) + " && " + move(cExtFile, dFile)},
+				},
+			}
+		})(generateFilename(), generateFilename(".."), generateFilename(".."), generateFilename()),
+		(func(aFile, bExtFile, cExtDir, dDir Filename) TestModificationChain {
+			return TestModificationChain{
+				files: []Filename{aFile},
+				dirs:  []Filename{cExtDir},
+				after: TestModificationsList{
+					TestSimpleModification{move(aFile, bExtFile) + " && " + move(cExtDir, dDir)},
+				},
+			}
+		})(generateFilename(), generateFilename(".."), generateFilename(".."), generateFilename()),
 
 		(func() TestModificationChain {
 			generateFilenames := func(length int) []Filename {
@@ -1055,7 +1073,7 @@ func TestIntegration(t *testing.T) {
 
 					my.RunCommand(
 						localSandbox,
-						mkdir(dirname),
+						write(dirname + "/" + generateFilenamePart()), //mkdir(dirname),
 						nil,
 						func(err string) { panic(err) },
 					)

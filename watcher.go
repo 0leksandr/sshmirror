@@ -264,7 +264,9 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 			knownType, errReadEvent := func() (EventType, error) {
 				for _, eventType := range eventTypes {
 					for _, knownType := range knownTypes {
-						if eventType == knownType.str { return knownType.code, nil }
+						if eventType == knownType.str {
+							return knownType.code, nil
+						}
 					}
 				}
 				return 0, errors.New("unknown event: " + eventsStr)
@@ -314,8 +316,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 				select {
 					case nextEvent, ok := <- events:
 						if ok {
-							if nextEvent.eventType == MovedToCode {
-								if path.isDir != nextEvent.path.isDir { panic("inconsistent move") } // MAYBE: some fallback
+							if nextEvent.eventType == MovedToCode && path.isDir == nextEvent.path.isDir {
 								put(Moved{
 									from: path,
 									to:   nextEvent.path,
