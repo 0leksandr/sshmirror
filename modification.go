@@ -45,7 +45,7 @@ func (moved Moved) Join(queue *ModificationsQueue) {
 		return
 	}
 
-	queue.fs.Move(moved.from, moved.to.original)
+	queue.fs.Move(moved.from, moved.to)
 	queue.inPlace = append(queue.inPlace, moved)
 }
 func (updated Updated) AffectedPaths() []Path {

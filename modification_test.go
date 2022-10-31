@@ -13,34 +13,44 @@ func TestModificationsQueue_Add(t *testing.T) {
 	}
 
 	testCases := map[string][]TestCase{
+		"updating": {
+			{
+				[]Modification{
+					Updated{Path{}.New("1/2/3")},
+				},
+				[]Updated{
+					{Path{}.New("1/2/3")},
+				},
+			},
+		},
 		"deleting": {
 			{
 				[]Modification{
-					Updated{Path{}.New("1/2/3", false)},
-					Deleted{Path{}.New("1/2/3", false)},
+					Updated{Path{}.New("1/2/3")},
+					Deleted{Path{}.New("1/2/3")},
 				},
 				[]Updated{},
 			},
 			{
 				[]Modification{
-					Deleted{Path{}.New("1/2/3", false)},
-					Updated{Path{}.New("1/2/3", false)},
+					Deleted{Path{}.New("1/2/3")},
+					Updated{Path{}.New("1/2/3")},
 				},
 				[]Updated{
-					{Path{}.New("1/2/3", false)},
+					{Path{}.New("1/2/3")},
 				},
 			},
 			{
 				[]Modification{
-					Updated{Path{}.New("1/2/3", false)},
-					Deleted{Path{}.New("1/2", true)},
+					Updated{Path{}.New("1/2/3")},
+					Deleted{Path{}.New("1/2")},
 				},
 				[]Updated{},
 			},
 			{
 				[]Modification{
-					Updated{Path{}.New("1/2/3", false)},
-					Deleted{Path{}.New("1", true)},
+					Updated{Path{}.New("1/2/3")},
+					Deleted{Path{}.New("1")},
 				},
 				[]Updated{},
 			},
@@ -48,48 +58,38 @@ func TestModificationsQueue_Add(t *testing.T) {
 		"moving": {
 			{
 				[]Modification{
-					Updated{Path{}.New("1/2/3", false)},
-					Moved{Path{}.New("1/2/3", false), Path{}.New("1/2/4", false)},
+					Updated{Path{}.New("1/2/3")},
+					Moved{Path{}.New("1/2/3"), Path{}.New("1/2/4")},
 				},
 				[]Updated{
-					{Path{}.New("1/2/4", false)},
+					{Path{}.New("1/2/4")},
 				},
 			},
 			{
 				[]Modification{
-					Updated{Path{}.New("1/2/3", false)},
-					Moved{Path{}.New("1/2/3", false), Path{}.New("a/b/c", false)},
+					Updated{Path{}.New("1/2/3")},
+					Moved{Path{}.New("1/2/3"), Path{}.New("a/b/c")},
 				},
 				[]Updated{
-					{Path{}.New("a/b/c", false)},
+					{Path{}.New("a/b/c")},
 				},
 			},
 			{
 				[]Modification{
-					Updated{Path{}.New("1/2/3", false)},
-					Moved{Path{}.New("1/2", true), Path{}.New("a/b", true)},
+					Updated{Path{}.New("1/2/3")},
+					Moved{Path{}.New("1/2"), Path{}.New("a/b")},
 				},
 				[]Updated{
-					{Path{}.New("a/b/3", false)},
+					{Path{}.New("a/b/3")},
 				},
 			},
 			{
 				[]Modification{
-					Updated{Path{}.New("1/2/3", false)},
-					Moved{Path{}.New("1", true), Path{}.New("a", true)},
+					Updated{Path{}.New("1/2/3")},
+					Moved{Path{}.New("1"), Path{}.New("a")},
 				},
 				[]Updated{
-					{Path{}.New("a/2/3", false)},
-				},
-			},
-		},
-		"updating directory": {
-			{
-				[]Modification{
-					Updated{Path{}.New("1/2/3", true)},
-				},
-				[]Updated{
-					{Path{}.New("1/2/3", true)},
+					{Path{}.New("a/2/3")},
 				},
 			},
 		},
@@ -112,7 +112,7 @@ func TestTransactionalQueue(t *testing.T) {
 
 	testCases := func(prefix string) []TestCase {
 		path := func(path string) Path {
-			return Path{}.New(Filename(path), false)
+			return Path{}.New(Filename(path))
 		}
 		a := path(prefix + "-a")
 		b := path(prefix + "-b")

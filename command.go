@@ -15,8 +15,6 @@ type UnixCommander struct {
 func (commander UnixCommander) MoveCommand(from, to Path) string {
 	// TODO: delete empty directories of `from`
 
-	if from.isDir != to.isDir { panic("only same-type file entries are supported") }
-
 	mkdirCommand := "true"
 	toDir := to.Parent()
 	if len(toDir.parts) > 0 { mkdirCommand = commander.MkdirCommand(toDir) }
@@ -29,6 +27,5 @@ func (commander UnixCommander) DeleteCommand(path Path) string {
 	return fmt.Sprintf("rm -rf -- %s", path.original.Escaped())
 }
 func (commander UnixCommander) MkdirCommand(dir Path) string {
-	if !dir.isDir { panic("must be a dir") } // TODO: fix
 	return fmt.Sprintf("mkdir -p -- %s", dir.original.Escaped())
 }

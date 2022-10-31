@@ -53,30 +53,32 @@ func TestWatchers(t *testing.T) {
 				my.AssertEquals(t, modifications, expected, watcher, command, my.GetTrace(false))
 			}
 
-			assertModification(mkdir("aaa"), Updated{Path{}.New("aaa", true)})
+			assertModification(mkdir("a"), Updated{Path{}.New("a")})
+			assertModification(remove("a"), Deleted{Path{}.New("a")})
+			assertModification(create("a"), Updated{Path{}.New("a")})
+			assertModification(move("a", "../a"), Deleted{Path{}.New("a")})
+			assertModification(write("a"), Updated{Path{}.New("a")})
+			assertModification(remove("a"), Deleted{Path{}.New("a")})
 
-			for _, filename := range []Filename{
-				"a", // MAYBE: use `generateFilenamePart`
-				"aaa/bbb",
-			} {
-				assertModification(create(filename), Updated{Path{}.New(filename, false)})
-				assertModification(move(filename, "../a"), Deleted{Path{}.New(filename, false)})
-				assertModification(write(filename), Updated{Path{}.New(filename, false)})
-				assertModification(remove(filename), Deleted{Path{}.New(filename, false)})
-			}
+			assertModification(mkdir("aaa/bbb"), Updated{Path{}.New("aaa")})
+			assertModification(remove("aaa/bbb"), Deleted{Path{}.New("aaa/bbb")})
+			assertModification(create("aaa/bbb"), Updated{Path{}.New("aaa/bbb")})
+			assertModification(move("aaa/bbb", "../a"), Deleted{Path{}.New("aaa/bbb")})
+			assertModification(write("aaa/bbb"), Updated{Path{}.New("aaa/bbb")})
+			assertModification(remove("aaa/bbb"), Deleted{Path{}.New("aaa/bbb")})
 
-			assertModification(write("a"), Updated{Path{}.New("a", false)})
+			assertModification(write("a"), Updated{Path{}.New("a")})
 			assertModification(
 				move("a", "b"),
-				Moved{Path{}.New("a", false), Path{}.New("b", false)},
+				Moved{Path{}.New("a"), Path{}.New("b")},
 			)
 			assertModification(
 				move("b", "aaa/c"),
-				Moved{Path{}.New("b", false), Path{}.New("aaa/c", false)},
+				Moved{Path{}.New("b"), Path{}.New("aaa/c")},
 			)
 			assertModification(
 				move("aaa", "bbb"),
-				Moved{Path{}.New("aaa", true), Path{}.New("bbb", true)},
+				Moved{Path{}.New("aaa"), Path{}.New("bbb")},
 			)
 		})()
 	}

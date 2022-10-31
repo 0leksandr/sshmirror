@@ -39,10 +39,7 @@ func (FsnotifyWatcher) New(root string, exclude string) Watcher {
 	events, watcher.stopWatching = FsnotifyWatcher{}.watchDirRecursive(root, ignored)
 
 	getPath := func(event fsnotify.Event) Path {
-		return Path{}.New(
-			Filename(event.Name[len(root)+1:]),
-			false, // TODO: implement
-		)
+		return Path{}.New(Filename(event.Name[len(root)+1:]))
 	}
 
 	var processEvent func(event fsnotify.Event)
@@ -217,6 +214,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 	type Event struct {
 		eventType EventType
 		path      Path
+		isDir     bool
 	}
 	events := make(chan Event) // MAYBE: reserve size
 	watcher.onClose = func() error {
@@ -258,7 +256,8 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 			if line == "" { break }
 			watcher.logger.Debug("inotify.line", line)
 			parts := reg.FindStringSubmatch(line)
-			path := Path{}.New(Filename(parts[1]), false)
+			path := Path{}.New(Filename(parts[1]))
+			isDir := false
 			eventsStr := parts[2]
 			eventTypes := strings.Split(eventsStr, ",")
 			knownType, errReadEvent := func() (EventType, error) {
@@ -274,13 +273,14 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 			if errReadEvent == nil {
 				for _, eventType := range eventTypes {
 					if eventType == IsDir {
-						path.isDir = true
+						isDir = true
 						break
 					}
 				}
 				events <- Event{
 					eventType: knownType,
 					path:      path,
+					isDir:     isDir,
 				}
 			} else {
 				watcher.logger.Error(errReadEvent.Error())
@@ -316,7 +316,7 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 				select {
 					case nextEvent, ok := <- events:
 						if ok {
-							if nextEvent.eventType == MovedToCode && path.isDir == nextEvent.path.isDir {
+							if nextEvent.eventType == MovedToCode && event.isDir == nextEvent.isDir {
 								put(Moved{
 									from: path,
 									to:   nextEvent.path,

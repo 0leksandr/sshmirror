@@ -276,7 +276,7 @@ func create(filename Filename) string { // MAYBE: touch
 var contentIndex = 0
 func write(filename Filename) string {
 	var _mkdir string
-	dir := Path{}.New(filename, false).Parent()
+	dir := Path{}.New(filename).Parent()
 	if len(dir.parts) > 0 { _mkdir = mkdir(dir.original) + " && " }
 	contentIndex++
 	return _mkdir + fmt.Sprintf("echo %d > %s", contentIndex, filename.Escaped())
@@ -285,10 +285,10 @@ func move(from, to Filename) string {
 	return fmt.Sprintf("mv %s %s", from.Escaped(), to.Escaped())
 }
 func remove(filename Filename) string {
-	return fmt.Sprintf("/bin/rm %s", filename.Escaped())
+	return fmt.Sprintf("/bin/rm -r %s", filename.Escaped())
 }
 func mkdir(dir Filename) string {
-	return UnixCommander{}.MkdirCommand(Path{}.New(dir, true))
+	return UnixCommander{}.MkdirCommand(Path{}.New(dir))
 }
 
 func basicModificationChains() []TestModificationChain {

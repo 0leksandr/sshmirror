@@ -6,79 +6,53 @@ import (
 )
 
 func TestPath_Equals(t *testing.T) {
-	my.Assert(t, Path{}.New("aaa/bbb/ccc", true).Equals(Path{}.New("aaa/bbb/ccc", true)))
-	my.Assert(t, Path{}.New("aaa/bbb/ccc", false).Equals(Path{}.New("aaa/bbb/ccc", false)))
+	my.Assert(t, Path{}.New("aaa/bbb/ccc").Equals(Path{}.New("aaa/bbb/ccc")))
 	for _, path := range []Path{
-		Path{}.New("aaa/bbb/ccc", true),
-		Path{}.New("aaa/bbb/ddd", false),
-		Path{}.New("aaa/ddd/ccc", false),
-		Path{}.New("ddd/bbb/ccc", false),
+		Path{}.New("aaa/bbb/ddd"),
+		Path{}.New("aaa/ddd/ccc"),
+		Path{}.New("ddd/bbb/ccc"),
 	} {
-		my.Assert(t, !Path{}.New("aaa/bbb/ccc", false).Equals(path), path)
-		my.Assert(t, !path.Equals(Path{}.New("aaa/bbb/ccc", false)), path)
+		my.Assert(t, !Path{}.New("aaa/bbb/ccc").Equals(path), path)
+		my.Assert(t, !path.Equals(Path{}.New("aaa/bbb/ccc")), path)
 	}
 }
 func TestPath_IsParentOf(t *testing.T) {
 	for _, path := range []Path{
-		Path{}.New("aaa", true),
-		Path{}.New("aaa/bbb", true),
-		Path{}.New("aaa/bbb/ccc", false),
+		Path{}.New("aaa"),
+		Path{}.New("aaa/bbb"),
+		Path{}.New("aaa/bbb/ccc"),
 	} {
-		my.Assert(t, path.IsParentOf(Path{}.New("aaa/bbb/ccc", false)), path)
+		my.Assert(t, path.IsParentOf(Path{}.New("aaa/bbb/ccc")), path)
 	}
 
 	for _, path := range []Path{
-		Path{}.New("aaa/bbb", true),
-		Path{}.New("aaa/bbb/ccc", true),
-		Path{}.New("aaa/bbb/ccc", false),
+		Path{}.New("aaa/bbb"),
+		Path{}.New("aaa/bbb/ccc"),
 	} {
-		my.Assert(t, Path{}.New("aaa/bbb", true).IsParentOf(path), path)
+		my.Assert(t, Path{}.New("aaa/bbb").IsParentOf(path), path)
 	}
 
 	for _, path := range []Path{
-		Path{}.New("ddd", true),
-		Path{}.New("aaa/ddd", true),
-		Path{}.New("aaa/bbb/ccc", true),
-		Path{}.New("aaa/bbb/ddd", true),
-		Path{}.New("aaa/bbb/ccc/ddd", false),
+		Path{}.New("ddd"),
+		Path{}.New("aaa/ddd"),
+		Path{}.New("aaa/bbb/ddd"),
 	} {
-		my.Assert(t, !path.IsParentOf(Path{}.New("aaa/bbb/ccc", false)), path)
-	}
-
-	for _, path := range []Path{
-		Path{}.New("aaa", true),
-		Path{}.New("aaa/bbb", true),
-		Path{}.New("aaa/bbb/ccc", true),
-		Path{}.New("aaa/bbb/ccc/ddd", true),
-	} {
-		my.Assert(t, !Path{}.New("aaa/bbb/ccc", false).IsParentOf(path), path)
+		my.Assert(t, !path.IsParentOf(Path{}.New("aaa/bbb/ccc")), path)
 	}
 }
 func TestPath_Relates(t *testing.T) {
 	for _, paths := range [][2]Path{
 		{
-			Path{}.New("aaa/bbb/ccc", false),
-			Path{}.New("aaa/bbb/ccc", false),
+			Path{}.New("aaa/bbb/ccc"),
+			Path{}.New("aaa/bbb/ccc"),
 		},
 		{
-			Path{}.New("aaa/bbb/ccc", true),
-			Path{}.New("aaa/bbb/ccc", true),
+			Path{}.New("aaa/bbb"),
+			Path{}.New("aaa/bbb/ccc"),
 		},
 		{
-			Path{}.New("aaa/bbb", true),
-			Path{}.New("aaa/bbb/ccc", false),
-		},
-		{
-			Path{}.New("aaa/bbb", true),
-			Path{}.New("aaa/bbb/ccc", true),
-		},
-		{
-			Path{}.New("aaa/bbb/ccc", false),
-			Path{}.New("aaa/bbb", true),
-		},
-		{
-			Path{}.New("aaa/bbb/ccc", true),
-			Path{}.New("aaa/bbb", true),
+			Path{}.New("aaa/bbb/ccc"),
+			Path{}.New("aaa/bbb"),
 		},
 	} {
 		my.Assert(t, paths[0].Relates(paths[1]), paths)
@@ -86,12 +60,8 @@ func TestPath_Relates(t *testing.T) {
 
 	for _, paths := range [][2]Path{
 		{
-			Path{}.New("aaa/bbb/ccc", true),
-			Path{}.New("aaa/bbb/ccc", false),
-		},
-		{
-			Path{}.New("aaa/bbb", true),
-			Path{}.New("aaa/ccc", true),
+			Path{}.New("aaa/bbb"),
+			Path{}.New("aaa/ccc"),
 		},
 	} {
 		my.Assert(t, !paths[0].Relates(paths[1]), paths)
@@ -103,13 +73,12 @@ func TestPath_Parent(t *testing.T) {
 		expectedParent Filename
 	}
 	for _, testCase := range []TestCase{
-		{Path{}.New("aaa/bbb/ccc", false), "aaa/bbb"},
-		{Path{}.New("aaa/bbb/ccc", true), "aaa/bbb"},
-		{Path{}.New("aaa/bbb", true), "aaa"},
-		{Path{}.New("aaa", true), ""},
-		{Path{}.New("", true), ""},
+		{Path{}.New("aaa/bbb/ccc"), "aaa/bbb"},
+		{Path{}.New("aaa/bbb"), "aaa"},
+		{Path{}.New("aaa"), ""},
+		{Path{}.New(""), ""},
 	} {
-		my.AssertEquals(t, testCase.original.Parent(), Path{}.New(testCase.expectedParent, true), testCase)
+		my.AssertEquals(t, testCase.original.Parent(), Path{}.New(testCase.expectedParent), testCase)
 	}
 }
 func TestPath_Move(t *testing.T) {
@@ -128,32 +97,27 @@ func TestPath_Move(t *testing.T) {
 	}
 
 	assertMoved(
-		Path{}.New("aaa/bbb/ccc", false),
-		Path{}.New("aaa/bbb", true),
-		Path{}.New("aaa/ddd", true),
-		Path{}.New("aaa/ddd/ccc", false),
+		Path{}.New("aaa/bbb/ccc"),
+		Path{}.New("aaa/bbb"),
+		Path{}.New("aaa/ddd"),
+		Path{}.New("aaa/ddd/ccc"),
 	)
 	assertMoved(
-		Path{}.New("aaa/bbb/ccc", false),
-		Path{}.New("aaa", true),
-		Path{}.New("ddd", true),
-		Path{}.New("ddd/bbb/ccc", false),
+		Path{}.New("aaa/bbb/ccc"),
+		Path{}.New("aaa"),
+		Path{}.New("ddd"),
+		Path{}.New("ddd/bbb/ccc"),
 	)
 	assertMoved(
-		Path{}.New("aaa/bbb/ccc", true),
-		Path{}.New("aaa/bbb/ccc", true),
-		Path{}.New("ddd", true),
-		Path{}.New("ddd", true),
+		Path{}.New("aaa/bbb/ccc"),
+		Path{}.New("aaa/bbb/ccc"),
+		Path{}.New("ddd"),
+		Path{}.New("ddd"),
 	)
 
 	assertNotMoved(
-		Path{}.New("aaa/bbb/ccc", false),
-		Path{}.New("aaa/ddd", true),
-		Path{}.New("eee", true),
-	)
-	assertNotMoved(
-		Path{}.New("aaa/bbb/ccc", false),
-		Path{}.New("aaa/bbb", false),
-		Path{}.New("ddd", false),
+		Path{}.New("aaa/bbb/ccc"),
+		Path{}.New("aaa/ddd"),
+		Path{}.New("eee"),
 	)
 }

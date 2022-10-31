@@ -73,7 +73,7 @@ type DummyFS struct { // TODO: remove?
 }
 func (dummyFS *DummyFS) AddFile(filename Filename) {
 	// TODO: check for existence
-	dummyFS.files = append(dummyFS.files, Path{}.New(filename, false))
+	dummyFS.files = append(dummyFS.files, Path{}.New(filename))
 }
 func (dummyFS *DummyFS) Has(path Path) bool {
 	for _, file := range dummyFS.files {
@@ -300,15 +300,9 @@ func (manager RemoteManager) fallbackFiles(files []Filename) {
 	deleted := make([]InPlaceModification, 0)
 	for file := range filesUnique {
 		if fileExists(Filename(manager.localDir + string(os.PathSeparator)) + file) {
-			updated = append(updated, Updated{Path{}.New(
-				file,
-				false, // MAYBE: implement
-			)})
+			updated = append(updated, Updated{Path{}.New(file)})
 		} else {
-			deleted = append(deleted, Deleted{Path{}.New(
-				file,
-				false, // MAYBE: implement
-			)})
+			deleted = append(deleted, Deleted{Path{}.New(file)})
 		}
 	}
 
@@ -516,7 +510,7 @@ func (client *SSHMirror) Init(batchSize FileSize) error {
 				}
 				if info.IsDir() { return nil }
 				filename := Filename(path)
-				if synced.Has(Path{}.New(filename, false)) { return nil } // MAYBE: optimize
+				if synced.Has(Path{}.New(filename)) { return nil } // MAYBE: optimize
 				batch.AddFile(filename)
 				curBatchSize = curBatchSize.Add(FileSize{bytes: uint64(info.Size())})
 				if curBatchSize.IsLess(batchSize) {
