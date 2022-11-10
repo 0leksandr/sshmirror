@@ -7,6 +7,7 @@ import (
 )
 
 type Path struct {
+	Serializable
 	original Filename
 	parts    []string
 }
@@ -56,6 +57,12 @@ func (path *Path) Move(from, to Path) error {
 	} else {
 		return errors.New("cannot move")
 	}
+}
+func (path Path) Serialize() Serialized {
+	return SerializedString(path.original)
+}
+func (Path) Deserialize(serialized Serialized) interface{} {
+	return Path{}.New(Filename(serialized.(SerializedString)))
 }
 func (path Path) String() string {
 	return "Path{" + string(path.original) + "}"

@@ -5,6 +5,7 @@ import (
 )
 
 type Node struct {
+	Serializable
 	name    string
 	parent  *Node
 	updated bool
@@ -68,8 +69,32 @@ func (node *Node) UpdatedRoot() bool {
 func (node *Node) SetUpdated() {
 	node.updated = true
 }
+func (node *Node) Serialize() Serialized {
+	children := make([]Serialized, 0, len(node.children))
+	for _, child := range node.children { children = append(children, child.Serialize()) }
+
+	return SerializedMap{
+		"name":     SerializedString(node.name),
+		"updated":  SerializedBool(node.updated),
+		"children": SerializedList(children),
+	}
+}
+func (*Node) Deserialize(serialized Serialized) interface{} {
+	return (&Node{}).deserializeWithParent(serialized, nil)
+}
+func (*Node) deserializeWithParent(serialized Serialized, parent *Node) *Node {
+	serializedMap := serialized.(SerializedMap)
+	node := Node{}.New(string(serializedMap["name"].(SerializedString)), parent)
+	node.updated = bool(serializedMap["updated"].(SerializedBool))
+	for _, childSerialized := range []Serialized(serializedMap["children"].(SerializedList)) {
+		childNode := (&Node{}).deserializeWithParent(childSerialized, node)
+		node.children[childNode.name] = childNode
+	}
+	return node
+}
 
 type ModFS struct {
+	Serializable
 	root *Node
 }
 func (ModFS) New() *ModFS {
@@ -86,12 +111,12 @@ func (modFS *ModFS) Delete(path Path) {
 	}
 }
 func (modFS *ModFS) Move(from Path, to Path) {
-	toParent := modFS.getNode(to.Parent())
 	nodeFrom := modFS.getNode(from)
 	if nodeFrom.Updated() { nodeFrom.SetUpdated() }
-	nameTo := modFS.getNode(to).name
 	delete(nodeFrom.GetParent().children, nodeFrom.name)
+	toParent := modFS.getNode(to.Parent())
 	nodeFrom.parent = toParent
+	nameTo := modFS.getNode(to).name
 	toParent.children[nameTo] = nodeFrom
 	nodeFrom.name = nameTo
 }
@@ -113,6 +138,16 @@ func (modFS *ModFS) Copy() *ModFS {
 	return &ModFS{
 		root: modFS.root.Copy(nil),
 	}
+}
+func (modFS *ModFS) Serialize() Serialized {
+	return SerializedMap{
+		"root": modFS.root.Serialize(),
+	}
+}
+func (*ModFS) Deserialize(serialized Serialized) interface{} {
+	modFS := ModFS{}.New()
+	modFS.root = (&Node{}).Deserialize(serialized.(SerializedMap)["root"]).(*Node)
+	return modFS
 }
 func (modFS *ModFS) getNode(path Path) *Node {
 	node := modFS.root

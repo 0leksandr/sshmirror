@@ -5,6 +5,7 @@ import (
 )
 
 type Modification interface {
+	Serializable
 	Join(queue *ModificationsQueue)
 	AffectedPaths() []Path
 }
@@ -57,8 +58,18 @@ func (deleted Deleted) AffectedPaths() []Path {
 func (moved Moved) AffectedPaths() []Path {
 	return []Path{moved.from, moved.to}
 }
+func (updated Updated) Serialize() Serialized {
+	return SerializedMap{
+		"type": SerializedString("Updated"),
+		"path": updated.path.Serialize(),
+	}
+}
+func (Updated) Deserialize(serialized Serialized) interface{} {
+	return Updated{Path{}.Deserialize(serialized.(SerializedMap)["path"]).(Path)}
+}
 
 type InPlaceModification interface { // MAYBE: rename
+	Modification
 	Command(commander RemoteCommander) string
 	OldFilename() Filename
 	AffectedFiles() []Filename
@@ -79,6 +90,15 @@ func (deleted Deleted) Equals(other InPlaceModification) bool {
 	}
 	return false
 }
+func (deleted Deleted) Serialize() Serialized {
+	return SerializedMap{
+		"type": SerializedString("Deleted"),
+		"path": deleted.path.Serialize(),
+	}
+}
+func (Deleted) Deserialize(serialized Serialized) interface{} {
+	return Deleted{Path{}.Deserialize(serialized.(SerializedMap)["path"]).(Path)}
+}
 func (moved Moved) Command(commander RemoteCommander) string {
 	return commander.MoveCommand(moved.from, moved.to)
 }
@@ -97,8 +117,30 @@ func (moved Moved) Equals(other InPlaceModification) bool {
 	}
 	return false
 }
+func (moved Moved) Serialize() Serialized {
+	return SerializedMap{
+		"type": SerializedString("Moved"),
+		"from": moved.from.Serialize(),
+		"to"  : moved.to.Serialize(),
+	}
+}
+func (Moved) Deserialize(serialized Serialized) interface{} {
+	serializedMap := serialized.(SerializedMap)
+	return Moved{Path{}.Deserialize(serializedMap["from"]).(Path), Path{}.Deserialize(serializedMap["to"]).(Path)}
+}
+
+func deserializeModification(serialized Serialized) Modification {
+	serializedMap := serialized.(SerializedMap)
+	switch serializedMap["type"].(SerializedString) {
+		case "Updated": return Updated{}.Deserialize(serializedMap).(Updated)
+		case "Deleted": return Deleted{}.Deserialize(serializedMap).(Deleted)
+		case "Moved":   return Moved{}.Deserialize(serializedMap).(Moved)
+		default:        panic("unknown modification type")
+	}
+}
 
 type ModificationsQueue struct {
+	Serializable
 	fs      *ModFS
 	mutex   sync.Mutex
 	inPlace []InPlaceModification
@@ -137,6 +179,27 @@ func (queue *ModificationsQueue) GetInPlace(flush bool) []InPlaceModification {
 }
 func (queue *ModificationsQueue) GetUpdated(flush bool) []Updated {
 	return queue.fs.FetchUpdated(flush)
+}
+func (queue *ModificationsQueue) Serialize() Serialized {
+	inPlace := make([]Serialized, 0, len(queue.inPlace))
+	for _, modification := range queue.inPlace { inPlace = append(inPlace, modification.Serialize()) }
+
+	return SerializedMap{
+		"fs":      queue.fs.Serialize(),
+		"inPlace": SerializedList(inPlace),
+	}
+}
+func (*ModificationsQueue) Deserialize(serialized Serialized) interface{} {
+	serializedMap := serialized.(SerializedMap)
+	inPlaceSerialized := serializedMap["inPlace"].(SerializedList)
+	inPlaceDeserialized := make([]InPlaceModification, 0, len(inPlaceSerialized))
+	for _, s := range inPlaceSerialized {
+		inPlaceDeserialized = append(inPlaceDeserialized, deserializeModification(s).(InPlaceModification))
+	}
+	queue := ModificationsQueue{}.New()
+	queue.fs = (&ModFS{}).Deserialize(serializedMap["fs"]).(*ModFS)
+	queue.inPlace = inPlaceDeserialized
+	return queue
 }
 func (queue *ModificationsQueue) copyInPlace() []InPlaceModification {
 	inPlace := make([]InPlaceModification, len(queue.inPlace))
@@ -188,6 +251,12 @@ func (queue *TransactionalQueue) GetInPlace(flush bool) []InPlaceModification {
 }
 func (queue *TransactionalQueue) GetUpdated(flush bool) []Updated {
 	return queue.ModificationsQueue.GetUpdated(flush)
+}
+func (*TransactionalQueue) Serialize() Serialized {
+	panic("not implemented")
+}
+func (*TransactionalQueue) Deserialize(Serialized) interface{} {
+	panic("not implemented")
 }
 func (queue *TransactionalQueue) mustNotHaveStarted() {
 	if queue.backup != nil { panic("transaction is active") }

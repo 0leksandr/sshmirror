@@ -103,6 +103,23 @@ func TestModificationsQueue_Add(t *testing.T) {
 		}
 	}
 }
+func TestModificationsQueue_Serialize(t *testing.T) {
+	for _, modifications := range [][]Modification{
+		{
+			Updated{Path{}.New("a/b/c")},
+			Deleted{Path{}.New("d/e/f")},
+			Moved{Path{}.New("g/h/i"), Path{}.New("j/k/l")},
+		},
+	} {
+		queue1 := ModificationsQueue{}.New()
+		for _, modification := range modifications { queue1.AtomicAdd(modification) }
+		serialized := queue1.Serialize()
+		queue2 := (&ModificationsQueue{}).Deserialize(serialized)
+		my.AssertEquals(t, queue1, queue2)
+		queue3 := (&ModificationsQueue{}).Deserialize(decodeToSerialized(jsonDeserialize(jsonSerialize(serialized))))
+		my.AssertEquals(t, queue1, queue3)
+	}
+}
 func TestTransactionalQueue(t *testing.T) {
 	type TestCase struct {
 		modifications   []Modification

@@ -104,7 +104,7 @@ func getTargetDir() string {
 func clearDir(dir string) {
 	my.RunCommand(
 		dir,
-		"find . -type f -not -name '.gitignore' -delete && find . -type d -delete",
+		"find . -type f -not -name '.gitignore' -not -name 'test.db' -delete && find . -type d -delete",
 		nil,
 		func(err string) { panic(err) },
 	)

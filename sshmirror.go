@@ -89,6 +89,9 @@ func (dummyFS *DummyFS) Delete(path Path) {
 		}
 	}
 }
+func (dummyFS *DummyFS) IsEmpty() bool {
+	return len(dummyFS.files) == 0
+}
 
 type FileSize struct {
 	megabytes uint64
@@ -524,8 +527,11 @@ func (client *SSHMirror) Init(batchSize FileSize) error {
 			case io.EOF:
 				upload(batch)
 			case nil:
-				upload(batch)
-				return nil
+				if batch.IsEmpty() {
+					return nil
+				} else {
+					upload(batch)
+				}
 			default:
 				return errBatch
 		}
@@ -625,7 +631,7 @@ func (client *SSHMirror) sync(queue *TransactionalQueue, modifiedPaths *SwitchCh
 				queue.Rollback()
 			}
 
-			continue
+			continue // MAYBE: do not always sync all `InPlace` first; instead, prioritize them with `Updated`
 		}
 		queue.Commit()
 
