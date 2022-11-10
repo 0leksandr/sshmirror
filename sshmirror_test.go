@@ -839,11 +839,11 @@ func TestIntegration(t *testing.T) {
 	reset := func(remotePath string, localPath string, full bool) {
 		var resetCmd string
 		if full {
-			//resetCmd = "find . -not -path . -not -name '.gitignore' -exec rm -r {} +"
-			resetCmd = "find . -type f -not -name '.gitignore' -delete && find . -type d -delete"
+			//resetCmd = "find . -not -path . -not -name '.gitignore' -not -name 'test.db' -exec rm -r {} +"
+			resetCmd = "find . -type f -not -name '.gitignore' -not -name 'test.db' -delete && find . -type d -delete"
 		} else {
-			//resetCmd = "find . -not -name '.gitignore' -not -name 'target' -delete"
-			resetCmd = "find . -type f -not -name '.gitignore' -delete && find . -type d -not -name 'target' -delete"
+			//resetCmd = "find . -not -name '.gitignore' -not -name 'test.db' -delete"
+			resetCmd = "find . -type f -not -name '.gitignore' -not -name 'test.db' -delete && find . -type d -not -name 'target' -delete"
 		}
 		my.RunCommand(
 			localPath,
