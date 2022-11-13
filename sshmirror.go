@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -428,17 +429,19 @@ type SSHMirror struct {
 }
 func (SSHMirror) New(config Config) *SSHMirror {
 	logger := config.logger
+	var exclude *regexp.Regexp
+	if config.exclude != "" { exclude = regexp.MustCompile(config.exclude) }
 
 	watcher := (func() Watcher {
 		switch config.watcher {
 			case InotifyWatcher{}.Name():
-				inotify, err := InotifyWatcher{}.New(config.localDir, config.exclude, logger)
+				inotify, err := InotifyWatcher{}.New(config.localDir, exclude, logger)
 				PanicIf(err)
 				return inotify
 			case FsnotifyWatcher{}.Name():
-				return FsnotifyWatcher{}.New(config.localDir, config.exclude)
+				return FsnotifyWatcher{}.New(config.localDir, exclude)
 			default:
-				if inotify, err := (InotifyWatcher{}.New(config.localDir, config.exclude, logger)); err == nil {
+				if inotify, err := (InotifyWatcher{}.New(config.localDir, exclude, logger)); err == nil {
 					return inotify
 				} else {
 					logger.Error(err.Error())
@@ -447,7 +450,7 @@ func (SSHMirror) New(config Config) *SSHMirror {
 							"contents of subdirectories, created after program was started. It can only reliably " +
 							"track files in existing subdirectories",
 					)
-					return FsnotifyWatcher{}.New(config.localDir, config.exclude)
+					return FsnotifyWatcher{}.New(config.localDir, exclude)
 				}
 		}
 	})()

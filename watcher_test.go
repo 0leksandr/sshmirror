@@ -4,20 +4,24 @@ import (
 	"fmt"
 	"github.com/0leksandr/my.go"
 	"os"
+	"regexp"
 	"testing"
 	"time"
 )
 
 func TestWatchers(t *testing.T) {
-	defer func() { clearDir(getSandbox()) }()
+	clearSandbox := func() { clearDir(getSandbox()) }
+	clearSandbox()
+	defer clearSandbox()
 
 	targetDir := getTargetDir()
+	exclude := regexp.MustCompile("excluded[12]|. --exclude 3")
 	for _, watcher := range []Watcher{
-		//FsnotifyWatcher{}.New(targetDir, ""),
+		//FsnotifyWatcher{}.New(targetDir, exclude),
 		(func() Watcher {
 			watcher, err := InotifyWatcher{}.New(
 				targetDir,
-				"", // MAYBE: test exclude
+				exclude,
 				Logger{
 					debug: NullLogger{},
 					error: StdErrLogger{LogFormatter{false}},
@@ -30,16 +34,13 @@ func TestWatchers(t *testing.T) {
 		(func() {
 			defer clearDir(targetDir)
 
-			runCommand := func(command string) {
+			assertModification := func(command string, expected ...Modification) {
 				my.RunCommand(
 					targetDir,
 					command,
 					nil,
 					func(err string) { panic(err) },
 				)
-			}
-			assertModification := func(command string, expected ...Modification) {
-				runCommand(command)
 
 				var modifications []Modification
 				readModifications: for {
@@ -80,6 +81,10 @@ func TestWatchers(t *testing.T) {
 				move("aaa", "bbb"),
 				Moved{Path{}.New("aaa"), Path{}.New("bbb")},
 			)
+
+			assertModification(write("excluded1"))
+			assertModification(write("excluded2/not-excluded"))
+			assertModification(write("not-excluded"), Updated{Path{}.New("not-excluded")})
 		})()
 	}
 }

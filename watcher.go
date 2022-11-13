@@ -29,14 +29,12 @@ type FsnotifyWatcher struct { // PRIORITY: watch new subdirectories
 	modifications chan Modification
 	stopWatching  func()
 }
-func (FsnotifyWatcher) New(root string, exclude string) Watcher {
-	var ignored *regexp.Regexp
-	if exclude != "" { ignored = regexp.MustCompile(exclude) }
+func (FsnotifyWatcher) New(root string, exclude *regexp.Regexp) Watcher {
 	watcher := FsnotifyWatcher{
 		modifications: make(chan Modification),
 	}
 	var events <-chan fsnotify.Event
-	events, watcher.stopWatching = FsnotifyWatcher{}.watchDirRecursive(root, ignored)
+	events, watcher.stopWatching = FsnotifyWatcher{}.watchDirRecursive(root, exclude)
 
 	getPath := func(event fsnotify.Event) Path {
 		return Path{}.New(Filename(event.Name[len(root)+1:]))
@@ -47,7 +45,7 @@ func (FsnotifyWatcher) New(root string, exclude string) Watcher {
 		if event.Op == 0 { return } // MAYBE: report? This is weird
 		if event.Op == fsnotify.Chmod { return }
 		path := getPath(event)
-		if ignored != nil && ignored.MatchString(path.original.Real()) { return }
+		if exclude != nil && exclude.MatchString(path.original.Real()) { return }
 
 		switch event.Op {
 			case fsnotify.Create, fsnotify.Write:
@@ -146,7 +144,7 @@ type InotifyWatcher struct {
 	logger        Logger
 	onClose       func() error
 }
-func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, error) {
+func (InotifyWatcher) New(root string, exclude *regexp.Regexp, logger Logger) (Watcher, error) {
 	modifications := make(chan Modification) // MAYBE: reserve size
 	watcher := &InotifyWatcher{
 		modifications: modifications,
@@ -206,8 +204,8 @@ func (InotifyWatcher) New(root string, exclude string, logger Logger) (Watcher, 
 		"--event", MovedFromStr,
 		"--event", MovedToStr,
 	}
-	if exclude != "" {
-		args = append(args, "--exclude", exclude) // TODO: test
+	if exclude != nil {
+		args = append(args, "--exclude", exclude.String())
 	}
 	command := exec.Command("inotifywait", append(args, "--", root)...)
 

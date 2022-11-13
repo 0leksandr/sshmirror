@@ -22,7 +22,6 @@ import (
 // TODO: test files and directories with same name
 // MAYBE: reproduce and investigate errors "rsync: link_stat * failed: No such file or directory (2)"
 // MAYBE: test tricky filenames: `--`, `.`, `..`, `*`, `:`, `\r`
-// MAYBE: test ignored
 // MAYBE: duplicate filenames in master chains
 // MAYBE: test fallback
 // MAYBE: test fsnotify watcher
