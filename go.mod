@@ -17,4 +17,4 @@ require (
 	golang.org/x/tools v0.38.0 // indirect
 )
 
-//replace github.com/0leksandr/my.go => /home/nezhraba/GolandProjects/my
+replace github.com/0leksandr/my.go => /Users/oleksandr/GolandProjects/my.go

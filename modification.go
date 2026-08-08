@@ -189,7 +189,7 @@ func (queue *ModificationsQueue) Serialize() Serialized {
 		"inPlace": SerializedList(inPlace),
 	}
 }
-func (*ModificationsQueue) Deserialize(serialized Serialized) interface{} {
+func (*ModificationsQueue) Deserialize(serialized Serialized) any {
 	serializedMap := serialized.(SerializedMap)
 	inPlaceSerialized := serializedMap["inPlace"].(SerializedList)
 	inPlaceDeserialized := make([]InPlaceModification, 0, len(inPlaceSerialized))
@@ -252,12 +252,21 @@ func (queue *TransactionalQueue) GetInPlace(flush bool) []InPlaceModification {
 func (queue *TransactionalQueue) GetUpdated(flush bool) []Updated {
 	return queue.ModificationsQueue.GetUpdated(flush)
 }
-func (*TransactionalQueue) Serialize() Serialized {
-	panic("not implemented")
-}
-func (*TransactionalQueue) Deserialize(Serialized) interface{} {
-	panic("not implemented")
+func (queue *TransactionalQueue) Add(modification Modification) {
+	queue.ModificationsQueue.Add(modification)
 }
 func (queue *TransactionalQueue) mustNotHaveStarted() {
 	if queue.backup != nil { panic("transaction is active") }
+}
+func (queue *TransactionalQueue) copyInPlace() []InPlaceModification {
+	return queue.ModificationsQueue.copyInPlace()
+}
+func (*TransactionalQueue) Serialize() Serialized {
+	panic("not implemented")
+}
+func (*TransactionalQueue) Deserialize(Serialized) any {
+	panic("not implemented")
+}
+func (*TransactionalQueue) Copy() *ModificationsQueue {
+	panic("not implemented")
 }

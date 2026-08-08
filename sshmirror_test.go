@@ -17,6 +17,10 @@ import (
 	"time"
 )
 
+func TestTypes(t *testing.T) {
+	my.TestTypes(t)
+}
+
 // TODO: test modifying root dir: https://github.com/0leksandr/sshmirror/issues/4
 // TODO: test tabs, zero-symbols and others in filenames
 // TODO: test files and directories with same name

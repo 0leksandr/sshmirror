@@ -386,7 +386,7 @@ func (watcher *InotifyWatcher) getNrFiles(root string) (uint64, error) {
 		"find . -type f |wc -l",
 		func(out string) {
 			var err error
-			nrFiles, err = strconv.ParseUint(out, 10, 64)
+			nrFiles, err = strconv.ParseUint(strings.TrimSpace(out), 10, 64)
 			PanicIf(err)
 		},
 		WriteToStderr,

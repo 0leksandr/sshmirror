@@ -85,7 +85,7 @@ func (dummyFS *DummyFS) Has(path Path) bool {
 func (dummyFS *DummyFS) Delete(path Path) {
 	for i := 0; i < len(dummyFS.files); i++ {
 		if path.IsParentOf(dummyFS.files[i]) {
-			dummyFS.files = my.Remove(dummyFS.files, i).([]Path)
+			dummyFS.files = my.Remove(dummyFS.files, i)
 			i--
 		}
 	}
